@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Skylight Family",
+        "description": "Coordinates family members with their calendars and to-do lists, for Skylight HA to read. Add members and task presets afterward from this integration's page."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Skylight Family is already configured."
+    }
+  },
+  "config_subentries": {
+    "member": {
+      "initiate_flow": {
+        "user": "Add member"
+      },
+      "entry_type": "Member",
+      "step": {
+        "user": {
+          "title": "Add family member",
+          "data": {
+            "name": "Name",
+            "person_entity_id": "Person",
+            "calendar_entity_ids": "Calendars",
+            "todo_entity_id": "To-do list",
+            "color": "Color",
+            "preset_subentry_id": "Task preset"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit family member",
+          "data": {
+            "name": "Name",
+            "person_entity_id": "Person",
+            "calendar_entity_ids": "Calendars",
+            "todo_entity_id": "To-do list",
+            "color": "Color",
+            "preset_subentry_id": "Task preset"
+          }
+        }
+      }
+    },
+    "preset": {
+      "initiate_flow": {
+        "user": "Add preset"
+      },
+      "entry_type": "Preset",
+      "step": {
+        "user": {
+          "title": "Add task preset",
+          "data": {
+            "name": "Name",
+            "items": "Default tasks"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit task preset",
+          "data": {
+            "name": "Name",
+            "items": "Default tasks"
+          }
+        }
+      }
+    }
+  }
+}

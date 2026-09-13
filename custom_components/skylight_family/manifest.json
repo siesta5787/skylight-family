@@ -1,0 +1,12 @@
+{
+  "domain": "skylight_family",
+  "name": "Skylight Family",
+  "codeowners": ["@siesta5787"],
+  "config_flow": true,
+  "documentation": "https://github.com/siesta5787/skylight-family",
+  "integration_type": "hub",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/siesta5787/skylight-family/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
