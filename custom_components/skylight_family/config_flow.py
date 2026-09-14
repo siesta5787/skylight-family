@@ -16,6 +16,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.const import CONF_NAME
@@ -28,7 +29,9 @@ from .const import (
     CONF_PERSON,
     CONF_PRESET,
     CONF_PRESET_ITEMS,
+    CONF_RESET_TIME,
     CONF_TODO,
+    DEFAULT_RESET_TIME,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
@@ -58,6 +61,33 @@ class SkylightFamilyConfigFlow(ConfigFlow, domain=DOMAIN):
             SUBENTRY_TYPE_MEMBER: MemberSubentryFlow,
             SUBENTRY_TYPE_PRESET: PresetSubentryFlow,
         }
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return SkylightFamilyOptionsFlow()
+
+
+class SkylightFamilyOptionsFlow(OptionsFlow):
+    """Integration-wide settings — currently just the daily preset reset time."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_RESET_TIME,
+                    default=self.config_entry.options.get(
+                        CONF_RESET_TIME, DEFAULT_RESET_TIME
+                    ),
+                ): selector.TimeSelector(),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 def _preset_choices(entry: ConfigEntry) -> dict[str, str]:

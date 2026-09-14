@@ -52,26 +52,31 @@ Or by hand: copy `custom_components/skylight_family/` into your HA config's
 
 ## Development
 
-This is a plain Python HA custom integration — no build step. To iterate on
-it locally you need a running Home Assistant instance with this repo's
-`custom_components/skylight_family` symlinked or copied into its
-`config/custom_components/`. The quickest loop:
+This is a plain Python HA custom integration — no build step. `homeassistant`
+does not run on native Windows at all (it hard-exits on launch — Linux/macOS/
+WSL only), so iterate via WSL or a Linux box, with this repo's
+`custom_components/skylight_family` copied or symlinked into a scratch HA
+config's `config/custom_components/`. The quickest loop:
 
 ```sh
-python -m venv .venv
-. .venv/Scripts/activate   # or `source .venv/bin/activate` on Linux/Pop!_OS
+python3 -m venv .venv
+source .venv/bin/activate
 pip install homeassistant
 mkdir -p config/custom_components
-ln -s "$(pwd)/custom_components/skylight_family" config/custom_components/skylight_family
-hass -c config --skip-pip
+cp -r custom_components/skylight_family config/custom_components/   # or symlink if fully inside WSL's own filesystem
+hass -c config
 ```
 
-Then open the local HA instance at `http://localhost:8123` and add the
-integration from Settings as usual. `config/` is gitignored.
+Then open the local HA instance at `http://localhost:8123` (reachable
+directly from Windows if running under WSL2 — no port forwarding needed)
+and add the integration from Settings as usual. `config/` is gitignored.
+See `CLAUDE.md` for the full step-by-step (including driving it headlessly
+over HA's REST API) and gotchas found while testing this.
 
-Everything here is untested against a live HA core as of initial scaffold —
-expect to iterate on `config_flow.py`/`__init__.py` against real HA subentry
-behavior before this is solid.
+Verified end to end against a live `homeassistant` core via WSL on
+2026-09-13 (config flow, subentry flows, options flow, reconfigure, and the
+scheduled reset job all confirmed working) — see `CLAUDE.md` for exactly
+what was tested and the REST API details used to drive it headlessly.
 
 ## License
 

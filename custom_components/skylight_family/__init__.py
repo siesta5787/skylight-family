@@ -14,7 +14,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
@@ -42,20 +42,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     reset_time = dt_util.parse_time(
         entry.options.get(CONF_RESET_TIME, DEFAULT_RESET_TIME)
     )
+
+    @callback
+    def _handle_reset_time(_now: object) -> None:
+        hass.async_create_task(_apply_daily_reset(hass, entry))
+
     unsub = async_track_time_change(
         hass,
-        lambda _now: hass.async_create_task(_apply_daily_reset(hass, entry)),
+        _handle_reset_time,
         hour=reset_time.hour,
         minute=reset_time.minute,
         second=reset_time.second,
     )
     entry.async_on_unload(unsub)
 
+    # Reload on any change to options (new reset time) or subentries (a
+    # member/preset added, edited, or removed) so it takes effect
+    # immediately instead of needing a manual HA restart.
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _seed_builtin_presets(hass: HomeAssistant, entry: ConfigEntry) -> None:

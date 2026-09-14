@@ -10,6 +10,16 @@
       "single_instance_allowed": "Skylight Family is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Skylight Family settings",
+        "data": {
+          "reset_time": "Daily preset reset time"
+        }
+      }
+    }
+  },
   "config_subentries": {
     "member": {
       "initiate_flow": {
