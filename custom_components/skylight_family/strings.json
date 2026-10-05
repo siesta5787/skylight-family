@@ -15,7 +15,7 @@
       "init": {
         "title": "Skylight Family settings",
         "data": {
-          "reset_time": "Daily preset reset time"
+          "reset_time": "Daily reset time (clears completed items and applies today's presets)"
         }
       }
     }
@@ -35,7 +35,13 @@
             "calendar_entity_ids": "Calendars",
             "todo_entity_id": "To-do list",
             "color": "Color",
-            "preset_subentry_id": "Task preset"
+            "preset_mon": "Monday preset",
+            "preset_tue": "Tuesday preset",
+            "preset_wed": "Wednesday preset",
+            "preset_thu": "Thursday preset",
+            "preset_fri": "Friday preset",
+            "preset_sat": "Saturday preset",
+            "preset_sun": "Sunday preset"
           }
         },
         "reconfigure": {
@@ -46,7 +52,13 @@
             "calendar_entity_ids": "Calendars",
             "todo_entity_id": "To-do list",
             "color": "Color",
-            "preset_subentry_id": "Task preset"
+            "preset_mon": "Monday preset",
+            "preset_tue": "Tuesday preset",
+            "preset_wed": "Wednesday preset",
+            "preset_thu": "Thursday preset",
+            "preset_fri": "Friday preset",
+            "preset_sat": "Saturday preset",
+            "preset_sun": "Sunday preset"
           }
         }
       }
@@ -70,6 +82,18 @@
             "name": "Name",
             "items": "Default tasks"
           }
+        }
+      }
+    }
+  },
+  "services": {
+    "apply_preset": {
+      "name": "Apply preset",
+      "description": "Pushes a preset's to-do items onto one or more Skylight Family members' to-do lists right now, independent of the daily schedule.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "The exact name of an existing Skylight Family preset, e.g. \"Toddler\"."
         }
       }
     }

@@ -7,7 +7,21 @@ CONF_PERSON = "person_entity_id"
 CONF_CALENDARS = "calendar_entity_ids"
 CONF_TODO = "todo_entity_id"
 CONF_COLOR = "color"
-CONF_PRESET = "preset_subentry_id"
+
+# Per-weekday preset assignment: (key, display label), Monday first to match
+# Python's own date.weekday() numbering (Monday == 0). A member's subentry
+# stores one optional preset_subentry_id per day under WEEKDAY_PRESET_FIELDS[key]
+# — no assignment for a given day means no preset is applied that day.
+WEEKDAYS: list[tuple[str, str]] = [
+    ("mon", "Monday"),
+    ("tue", "Tuesday"),
+    ("wed", "Wednesday"),
+    ("thu", "Thursday"),
+    ("fri", "Friday"),
+    ("sat", "Saturday"),
+    ("sun", "Sunday"),
+]
+WEEKDAY_PRESET_FIELDS: dict[str, str] = {key: f"preset_{key}" for key, _ in WEEKDAYS}
 
 # Preset subentry fields
 CONF_PRESET_ITEMS = "items"
@@ -15,6 +29,10 @@ CONF_PRESET_ITEMS = "items"
 # Entry options
 CONF_RESET_TIME = "reset_time"
 DEFAULT_RESET_TIME = "04:00:00"
+
+# Service: skylight_family.apply_preset
+SERVICE_APPLY_PRESET = "apply_preset"
+ATTR_PRESET = "preset"
 
 SUBENTRY_TYPE_MEMBER = "member"
 SUBENTRY_TYPE_PRESET = "preset"

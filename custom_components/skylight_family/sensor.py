@@ -19,9 +19,10 @@ from .const import (
     CONF_CALENDARS,
     CONF_COLOR,
     CONF_PERSON,
-    CONF_PRESET,
     CONF_TODO,
     SUBENTRY_TYPE_MEMBER,
+    WEEKDAY_PRESET_FIELDS,
+    WEEKDAYS,
 )
 
 
@@ -59,15 +60,19 @@ class SkylightFamilyMemberSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         data = self._subentry.data
-        preset_id = data.get(CONF_PRESET)
-        preset_title = None
-        if preset_id and (preset_subentry := self._entry.subentries.get(preset_id)):
-            preset_title = preset_subentry.title
+
+        presets: dict[str, str | None] = {}
+        for day_key, _day_label in WEEKDAYS:
+            preset_id = data.get(WEEKDAY_PRESET_FIELDS[day_key])
+            preset_subentry = (
+                self._entry.subentries.get(preset_id) if preset_id else None
+            )
+            presets[day_key] = preset_subentry.title if preset_subentry else None
 
         return {
             "person_entity_id": data.get(CONF_PERSON),
             "calendar_entity_ids": data.get(CONF_CALENDARS, []),
             "todo_entity_id": data.get(CONF_TODO),
             "color": data.get(CONF_COLOR),
-            "preset": preset_title,
+            "presets": presets,
         }

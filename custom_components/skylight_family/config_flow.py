@@ -27,7 +27,6 @@ from .const import (
     CONF_CALENDARS,
     CONF_COLOR,
     CONF_PERSON,
-    CONF_PRESET,
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
     CONF_TODO,
@@ -35,6 +34,8 @@ from .const import (
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
+    WEEKDAY_PRESET_FIELDS,
+    WEEKDAYS,
 )
 
 
@@ -90,6 +91,21 @@ class SkylightFamilyOptionsFlow(OptionsFlow):
         return self.async_show_form(step_id="init", data_schema=schema)
 
 
+def _optional_key(field_name: str, value: Any) -> vol.Marker:
+    """vol.Optional with a default — but only when there's a real value.
+
+    A defaulted vol.Optional substitutes the default in and still runs it
+    through the selector when the field is omitted from input, and HA's
+    selectors generally reject None. So a None "previous value" must leave
+    the key bare instead, matching the create-flow's un-defaulted fields.
+    """
+    return (
+        vol.Optional(field_name, default=value)
+        if value is not None
+        else vol.Optional(field_name)
+    )
+
+
 def _preset_choices(entry: ConfigEntry) -> dict[str, str]:
     """subentry_id -> title, for every preset subentry on this entry."""
     return {
@@ -97,6 +113,31 @@ def _preset_choices(entry: ConfigEntry) -> dict[str, str]:
         for subentry in entry.subentries.values()
         if subentry.subentry_type == SUBENTRY_TYPE_PRESET
     }
+
+
+def _weekday_preset_fields(
+    preset_choices: dict[str, str], current: dict[str, Any] | None = None
+) -> dict[Any, Any]:
+    """One optional preset SelectSelector per weekday.
+
+    No selection for a given day means no preset is applied that day —
+    these are independent, not a single "preset" with day overrides.
+    """
+    if not preset_choices:
+        return {}
+
+    options = [
+        {"value": subentry_id, "label": title}
+        for subentry_id, title in preset_choices.items()
+    ]
+    fields: dict[Any, Any] = {}
+    for day_key, _day_label in WEEKDAYS:
+        field_name = WEEKDAY_PRESET_FIELDS[day_key]
+        current_value = current.get(field_name) if current else None
+        fields[_optional_key(field_name, current_value)] = selector.SelectSelector(
+            selector.SelectSelectorConfig(options=options)
+        )
+    return fields
 
 
 class MemberSubentryFlow(ConfigSubentryFlow):
@@ -127,15 +168,7 @@ class MemberSubentryFlow(ConfigSubentryFlow):
             ),
             vol.Optional(CONF_COLOR): selector.ColorRGBSelector(),
         }
-        if preset_choices:
-            schema_dict[vol.Optional(CONF_PRESET)] = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        {"value": subentry_id, "label": title}
-                        for subentry_id, title in preset_choices.items()
-                    ]
-                )
-            )
+        schema_dict.update(_weekday_preset_fields(preset_choices))
 
         return self.async_show_form(
             step_id="user", data_schema=vol.Schema(schema_dict)
@@ -164,24 +197,12 @@ class MemberSubentryFlow(ConfigSubentryFlow):
             ): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="calendar", multiple=True)
             ),
-            vol.Optional(
-                CONF_TODO, default=subentry.data.get(CONF_TODO)
-            ): selector.EntitySelector(selector.EntitySelectorConfig(domain="todo")),
-            vol.Optional(
-                CONF_COLOR, default=subentry.data.get(CONF_COLOR)
-            ): selector.ColorRGBSelector(),
+            _optional_key(CONF_TODO, subentry.data.get(CONF_TODO)): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="todo")
+            ),
+            _optional_key(CONF_COLOR, subentry.data.get(CONF_COLOR)): selector.ColorRGBSelector(),
         }
-        if preset_choices:
-            schema_dict[
-                vol.Optional(CONF_PRESET, default=subentry.data.get(CONF_PRESET))
-            ] = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        {"value": subentry_id, "label": title}
-                        for subentry_id, title in preset_choices.items()
-                    ]
-                )
-            )
+        schema_dict.update(_weekday_preset_fields(preset_choices, current=subentry.data))
 
         return self.async_show_form(
             step_id="reconfigure", data_schema=vol.Schema(schema_dict)

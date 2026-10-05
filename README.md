@@ -12,19 +12,25 @@ what*, Skylight HA owns the *display*.
   and pick which `calendar.*` entities and which `todo.*` list belong to
   them, plus a color.
 - **Task presets** — reusable named lists of default to-do items (e.g.
-  "School-age kid": brush teeth, make bed, pack school bag). Assign a preset
-  to a member and its items get re-added to their to-do list every morning
-  (default 04:00) if missing — so routines don't have to be manually reset.
-  Three presets (School-age kid, Toddler, Adult) are seeded on first setup;
-  edit or delete them like any other preset.
+  "School-age kid": brush teeth, make bed, pack school bag). Three presets
+  (School-age kid, Toddler, Adult) are seeded on first setup; edit or
+  delete them like any other preset.
+- **A different preset per day of the week, per member** — each member has
+  7 independent preset slots (Monday–Sunday); leave a day blank to apply no
+  preset that day. Every morning (default 04:00, configurable) the
+  integration clears completed items off each member's to-do list and adds
+  back whichever items are missing from that day's assigned preset.
+- **Apply a preset on demand** — the `skylight_family.apply_preset` service
+  pushes a named preset onto a member's to-do list right now, independent
+  of the daily schedule (Developer Tools → Actions, or from an automation).
 - **Nothing new to look at in HA itself** — no Lovelace cards, no theme.
   The integration creates one `sensor.skylight_family_<name>` per member
   carrying the mapping (`person_entity_id`, `calendar_entity_ids`,
-  `todo_entity_id`, `color`, `preset`) as attributes, for Skylight HA (or
-  anything else) to read over the same WebSocket connection it already uses
-  for calendar data. Actual events/tasks are still read straight from the
-  real `calendar.*`/`todo.*` entities — this integration doesn't duplicate
-  them.
+  `todo_entity_id`, `color`, and a `presets` map of weekday → preset title)
+  as attributes, for Skylight HA (or anything else) to read over the same
+  WebSocket connection it already uses for calendar data. Actual
+  events/tasks are still read straight from the real `calendar.*`/`todo.*`
+  entities — this integration doesn't duplicate them.
 
 ## Why the name
 

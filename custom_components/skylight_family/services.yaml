@@ -1,0 +1,10 @@
+apply_preset:
+  target:
+    entity:
+      integration: skylight_family
+  fields:
+    preset:
+      required: true
+      example: "Toddler"
+      selector:
+        text:

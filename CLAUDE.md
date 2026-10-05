@@ -35,77 +35,126 @@ it.
 - **Presets are seeded once** on first setup (`_seed_builtin_presets` in
   `__init__.py`) — School-age kid / Toddler / Adult — then become ordinary
   editable/deletable preset subentries, not special-cased afterward.
-- **Daily reset job** (`_apply_daily_reset`, `async_track_time_change`,
-  default 04:00): for every member with both a `todo_entity_id` and a
-  `preset`, reads existing items via the stock `todo.get_items` service and
-  adds back any preset item summary not already present via `todo.add_item`.
-  Doesn't touch calendars or create its own storage — it drives HA's real
-  todo entities.
+- **Per-weekday preset assignment, not one preset per member.** A member
+  subentry stores up to 7 independent fields, `preset_mon`..`preset_sun`
+  (`WEEKDAY_PRESET_FIELDS` in `const.py`), each an optional preset
+  `subentry_id`. No assignment for a day means no preset applies that day —
+  these are independent slots, not a single preset with day overrides, so a
+  "same chores every day" member needs the same preset picked all 7 times.
+- **Daily job** (`_apply_daily_reset`, `async_track_time_change`, default
+  04:00), for every member with a `todo_entity_id`: first clears completed
+  items via the stock `todo.remove_completed_items` service
+  (`_clear_completed_items`), then — if today's weekday has a preset
+  assigned — reads existing items via `todo.get_items` and adds back any
+  preset item summary not already present via `todo.add_item`
+  (`_reset_todo_list`). Doesn't touch calendars or create its own storage —
+  it only ever drives HA's real todo entities. "Today" is `dt_util.now()`,
+  i.e. HA's configured timezone, matching when the scheduled trigger fires.
+- **On-demand apply**: `skylight_family.apply_preset` service
+  (`services.yaml`, handler in `__init__.py`'s `async_setup`) — push a named
+  preset onto a targeted member's to-do list right now, independent of the
+  schedule. Target is the member's `sensor.skylight_family_<name>` entity
+  (resolved to its subentry via the entity registry's `config_subentry_id`,
+  not by parsing the entity_id/name); `preset` field matches an existing
+  preset's title case-insensitively. Raises `HomeAssistantError` with a
+  plain-English message for an unknown preset or a non-member target entity
+  — shows as a toast via the frontend/WebSocket call path, but note the raw
+  REST `/api/services/...` endpoint surfaces *any* service-raised
+  `HomeAssistantError` as a bare 500 rather than a clean 4xx (a HA REST API
+  quirk, not specific to us — don't mistake that 500 for our error handling
+  being wrong when testing over REST).
 - **One `sensor.skylight_family_<name>` per member** (`sensor.py`) is the
   only new state this integration creates. State value is meaningless
-  ("ok"); the payload is in `extra_state_attributes`:
-  `person_entity_id`, `calendar_entity_ids`, `todo_entity_id`, `color`,
-  `preset` (resolved to the preset's title). This is what `skylight-ha`
-  is meant to read to build its member list — everything else (actual
-  events/tasks) it reads straight from the real `calendar.*`/`todo.*`
-  entities, not duplicated here.
+  ("ok"); the payload is in `extra_state_attributes`: `person_entity_id`,
+  `calendar_entity_ids`, `todo_entity_id`, `color`, and `presets` — a dict
+  of all 7 weekday keys to the assigned preset's title (or `null`). This is
+  what `skylight-ha` is meant to read to build its member list — everything
+  else (actual events/tasks) it reads straight from the real
+  `calendar.*`/`todo.*` entities, not duplicated here.
 - No Lovelace cards, no custom theme, no streaks/celebrations — nothing
-  renders in HA's own frontend at all.
+  renders in HA's own frontend at all. (A custom sidebar panel for
+  viewing/editing presets and manually applying them is a planned separate
+  frontend project, not started — see
+  `project_skylight_family_integration.md` memory for that discussion.)
 
 ## Known gaps
 
-- ~~No UI yet to change the daily reset time~~ — fixed 2026-09-13:
-  `SkylightFamilyOptionsFlow` (`config_flow.py`) exposes it via
-  Settings → Devices & Services → Skylight Family → Configure, using
-  `selector.TimeSelector()`. `__init__.py` also now registers
-  `entry.add_update_listener(_async_reload_entry)`, so changing the reset
-  time — or adding/editing/removing a member or preset subentry — reloads
-  the entry immediately instead of needing a manual HA restart.
 - **`CONF_COLOR` is an RGB list** (`[r, g, b]`, from `ColorRGBSelector`),
   not a hex string — fine functionally, just don't assume `"#rrggbb"` when
   wiring up the Skylight HA side.
-- ~~Entirely untested against a live HA core~~ — tested 2026-09-13 end to
-  end against real `homeassistant` core (2026.2.3, then 2026.9.2) via a
-  scratch WSL instance, driving the whole flow headlessly over HA's REST
-  API (config flow → subentry flows → options flow → reconfigure → the
-  scheduled reset job actually firing). See "What's been verified" below.
-  One real bug was found and fixed in the process (see Process gotchas).
+- Schema changed 2026-10-04 (single `preset_subentry_id` → 7 per-weekday
+  fields) with no migration — any member subentry created before that date
+  still has the old field sitting in its data, harmlessly ignored by
+  current code (nothing reads `preset_subentry_id` anymore). Not a problem
+  pre-release; would need a migration if this were ever in real use before
+  the schema change.
+- Not yet exercised: `PresetSubentryFlow.async_step_reconfigure`
+  specifically (structurally identical to the member one, which is
+  verified), and member *removal* (unloading a subentry / cleanup path).
+- No custom sidebar panel yet for viewing/editing presets or manually
+  applying them without going through Settings → Devices & Services — the
+  `apply_preset` service exists but today it's only reachable via
+  Developer Tools → Actions, an automation, or the WebSocket/REST API.
 
-## What's been verified (2026-09-13, against homeassistant 2026.9.2)
+## What's been verified
 
-All of the following were exercised against a live instance, not just
-read/reasoned about — the module loads with no import errors, and:
+**2026-09-13**, against `homeassistant` 2026.2.3 then 2026.9.2 — tested
+end-to-end via a scratch WSL instance, driving the whole flow headlessly
+over HA's REST API:
 
 - Main config flow creates the single entry and seeds all three built-in
-  presets automatically (`num_subentries: 3` right after creation).
+  presets automatically.
 - `MemberSubentryFlow`'s `user` step schema is correct: `person`/`calendar`/
   `todo` `EntitySelector`s scoped to the right domains, `ColorRGBSelector`,
   and the preset `SelectSelector` correctly lists live preset subentries by
   their real `subentry_id`/title.
-- Creating a member produces `sensor.skylight_family_<name>` with exactly
-  the attributes expected (`person_entity_id`, `calendar_entity_ids`,
-  `todo_entity_id`, `color`, `preset` resolved to its title).
+- Creating a member produces `sensor.skylight_family_<name>` with the
+  expected attributes.
 - The options flow (`reset_time`) round-trips correctly, including showing
   the previously-saved value as the new default on reopen.
 - `entry.add_update_listener` reload-on-change works for both an options
   change and a subentry add — the entry stays in `state: loaded` and the
   member sensor survives.
 - `async_step_reconfigure` pre-fills every field with the subentry's
-  current values and `async_update_and_abort` correctly updates them
-  (verified by changing a member's color/preset and re-reading the sensor).
-- The daily reset job's assumptions about the stock `todo` integration are
+  current values and `async_update_and_abort` correctly updates them.
+- The daily job's assumptions about the stock `todo` integration are
   correct: `todo.get_items` (with `return_response=True`) returns
   `{entity_id: {"items": [{"summary": ..., "uid": ..., "status": ...}]}}`,
-  and `todo.add_item` accepts `{"item": "<text>"}` — matching
-  `_reset_todo_list`'s use of `item["summary"]` exactly.
-- End-to-end: with a member on the "School-age kid" preset and one of its
-  three items already on the to-do list, triggering the scheduled reset
-  added exactly the two missing items and did not duplicate the existing
-  one.
+  and `todo.add_item` accepts `{"item": "<text>"}`.
+- End-to-end: with a member on a preset and one of its items already on
+  the to-do list, triggering the scheduled reset added exactly the missing
+  items and did not duplicate the existing one.
 
-Not yet exercised: `PresetSubentryFlow.async_step_reconfigure` specifically
-(structurally identical to the member one, which was verified), and member
-*removal* (unloading a subentry / cleanup path).
+**2026-10-04**, after adding per-weekday presets, the `apply_preset`
+service, and daily auto-clear, against `homeassistant` 2026.9.2 (same WSL
+instance, survived three weeks untouched — venv and `.storage` both intact):
+
+- The old single-member-preset data on pre-existing test members
+  (`preset_subentry_id`) was silently ignored after the upgrade with no
+  crash — entry reloaded to `state: loaded` cleanly.
+- `MemberSubentryFlow`'s reconfigure form correctly renders all 7
+  `preset_mon`..`preset_sun` `SelectSelector`s, each independently
+  optional. **Found and fixed a real bug here**: submitting a reconfigure
+  that omitted several of the unset weekday fields crashed with
+  `"expected str"` validation errors — see Process gotchas. The same
+  latent bug existed for `CONF_TODO`/`CONF_COLOR` in the reconfigure step
+  (fixed at the same time via a shared `_optional_key` helper) but hadn't
+  been triggered by prior testing, which always submitted every field.
+- After the fix: setting Monday/Tuesday presets and leaving the rest unset
+  saved correctly, and `sensor.skylight_family_<name>`'s `presets`
+  attribute showed the right title per day and `null` for unset days.
+- The combined daily job: pre-seeded two completed items and three
+  needs_action items on a member's to-do list, triggered the scheduled
+  job, and confirmed both halves in one pass — the two completed items
+  were removed via `todo.remove_completed_items`, and today's
+  weekday-assigned preset's items (already present) were left untouched/
+  not duplicated.
+- `skylight_family.apply_preset`: calling it against a member's sensor
+  entity with an empty to-do list and an existing preset name pushed
+  exactly that preset's items. Confirmed clean error messages (verified in
+  the log, not just assumed) for both an unknown preset name and a
+  non-member target entity — `HomeAssistantError` with a specific message
+  in both cases, not a crash.
 
 ## Dev loop / testing
 
@@ -224,6 +273,22 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
   anything, until the lambda was replaced with a small `@callback`-decorated
   function. Same rule applies to any other bare callback handed to an HA
   event-tracking helper in this codebase.
+- **A `vol.Optional(key, default=value)` still runs `value` through the
+  field's selector/validator when `key` is omitted from input — it doesn't
+  just skip the field.** If `value` is `None` (e.g. "this optional field
+  has no previous value") and the field's selector is something like
+  `SelectSelector`/`EntitySelector` that doesn't accept `None`, voluptuous
+  substitutes `None` in and then fails validating it, surfacing as a
+  confusing `"expected str"`-style error that looks like a frontend/input
+  problem rather than a schema-construction bug. Fix: only attach a
+  `default=` when there's a real previous value; otherwise use a bare
+  `vol.Optional(key)` so an omitted field is skipped entirely (see
+  `_optional_key` in `config_flow.py`). Hit this for real 2026-10-04 adding
+  the 7 per-weekday preset fields — and it turned out to be a *latent* bug
+  in the original `CONF_TODO`/`CONF_COLOR` reconfigure fields too, just
+  never triggered because earlier manual testing always submitted every
+  field rather than omitting untouched optional ones (which is what HA's
+  real frontend does for an untouched empty select).
 - `gh repo create` for this project's repo used `--private`, matching
   `skylight-ha`'s visibility — keep that consistent if either repo's
   visibility changes.
