@@ -20,12 +20,23 @@ what*, Skylight HA owns the *display*.
   preset that day. Every morning (default 04:00, configurable) the
   integration clears completed items off each member's to-do list and adds
   back whichever items are missing from that day's assigned preset.
-- **Apply a preset on demand** — the `skylight_family.apply_preset` service
-  pushes a named preset onto a member's to-do list right now, independent
-  of the daily schedule (Developer Tools → Actions, or from an automation).
-- **Nothing new to look at in HA itself** — no Lovelace cards, no theme.
-  The integration creates one `sensor.skylight_family_<name>` per member
-  carrying the mapping (`person_entity_id`, `calendar_entity_ids`,
+- **Apply a preset on demand** — push a preset onto someone's to-do list
+  right now, independent of the daily schedule: a button in the sidebar
+  panel, or the `skylight_family.apply_preset` service from an automation.
+- **A "Skylight" sidebar panel** — the day-to-day UI, so none of this needs
+  digging through Settings. Two tabs:
+  - **People** — each member's seven weekday preset dropdowns, a "push a
+    preset right now" button, and a collapsible form for which person,
+    to-do list, calendars and colour belong to them.
+  - **Presets** — view, add, edit and delete presets, and apply one to a
+    member from that side too.
+
+  It's a view of the same data as Settings → Devices & Services, not a
+  parallel store, so you can use either. Adding and removing *members*
+  still happens in Settings.
+- **A `sensor.skylight_family_<name>` per member** — the only new state
+  this integration creates, carrying the mapping (`person_entity_id`,
+  `calendar_entity_ids`,
   `todo_entity_id`, `color`, and a `presets` map of weekday → preset title)
   as attributes, for Skylight HA (or anything else) to read over the same
   WebSocket connection it already uses for calendar data. Actual
@@ -55,6 +66,11 @@ Or by hand: copy `custom_components/skylight_family/` into your HA config's
 2. Open the entry's **Configure** page (or the ⋮ menu on the integration
    card) to add members and manage presets — each is a *subentry*, so
    Add/Edit/Remove all happen through their own dialogs.
+3. After that, use the **Skylight** entry in the sidebar for day-to-day
+   work — weekday routines, presets, and pushing a preset to someone now.
+   (It's admin-only, and it's a separate page from HA's built-in "To-do
+   Lists"; if you'd rather only see one of them, hide the other by
+   long-pressing the sidebar and editing it.)
 
 ## Development
 
@@ -79,10 +95,11 @@ and add the integration from Settings as usual. `config/` is gitignored.
 See `CLAUDE.md` for the full step-by-step (including driving it headlessly
 over HA's REST API) and gotchas found while testing this.
 
-Verified end to end against a live `homeassistant` core via WSL on
-2026-09-13 (config flow, subentry flows, options flow, reconfigure, and the
-scheduled reset job all confirmed working) — see `CLAUDE.md` for exactly
-what was tested and the REST API details used to drive it headlessly.
+Verified end to end against a live `homeassistant` core via WSL — config
+flow, subentry flows, options flow, reconfigure and the scheduled reset job
+(2026-09-13), and the sidebar panel's WebSocket API plus the panel JS itself
+under jsdom (2026-10-05). See `CLAUDE.md` for exactly what was tested, what
+wasn't, and the API details used to drive it headlessly.
 
 ## License
 

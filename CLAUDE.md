@@ -71,11 +71,42 @@ it.
   what `skylight-ha` is meant to read to build its member list — everything
   else (actual events/tasks) it reads straight from the real
   `calendar.*`/`todo.*` entities, not duplicated here.
-- No Lovelace cards, no custom theme, no streaks/celebrations — nothing
-  renders in HA's own frontend at all. (A custom sidebar panel for
-  viewing/editing presets and manually applying them is a planned separate
-  frontend project, not started — see
-  `project_skylight_family_integration.md` memory for that discussion.)
+- **"Skylight" sidebar panel** (`panel.py` + `frontend/skylight-panel.js`),
+  the day-to-day UI so none of this needs digging through Settings →
+  Devices & Services. Two tabs: *People* (each member's 7 weekday preset
+  dropdowns + Save, a "push a preset right now" row, and a collapsible
+  Linked entities form for name/person/to-do/calendars/colour) and
+  *Presets* (view/add/edit/delete presets, plus apply-to-a-member from that
+  side too). Registered via `panel_custom.async_register_panel` with
+  `component_name="custom"`, `embed_iframe=False`, `require_admin=True`.
+- **The panel's own WebSocket API** (`websocket_api.py`), registered
+  domain-wide in `async_setup`: `skylight_family/config` (one round trip for
+  everything the panel draws — members, presets, weekday list, reset time),
+  plus `preset/create`, `preset/update`, `preset/delete`, `member/update`
+  and `apply_preset`. All of them are thin wrappers over
+  `hass.config_entries.async_{add,update,remove}_subentry`, so the panel and
+  the Settings subentry flows are two views of exactly the same data — no
+  parallel storage. Mutations are `@websocket_api.require_admin`; the read
+  isn't, leaving room to show a household member their routine read-only
+  later.
+  - `member/update` is a **merge, not a replace** — only keys present in the
+    message are touched. That's what lets "Save routine" send just
+    `routine` without clobbering person/calendars/colour.
+  - `preset/delete` first walks every member and clears that preset id out
+    of any weekday slot, so deleting can't leave a dangling reference that
+    reads as "a preset is set" in the UI while the daily job applies
+    nothing.
+- **`helpers.py`** holds the shared lookups (`get_entry`, `members`,
+  `presets`, `require_subentry`) and the to-do operations
+  (`async_clear_completed`, `async_apply_items`,
+  `async_apply_preset_to_member`). It exists as its own module purely so
+  `websocket_api.py` and `__init__.py` can both use them without a circular
+  import back through the package's `__init__`.
+- No Lovelace cards and no custom theme — the sidebar panel is the only
+  thing this integration renders in HA's frontend, and it's a standalone
+  page, not a dashboard card. HA's built-in "To-do Lists" sidebar entry is
+  untouched; hiding/reordering it is a per-user frontend preference (long-
+  press the sidebar → edit), not something this integration should do.
 
 ## Known gaps
 
@@ -91,10 +122,22 @@ it.
 - Not yet exercised: `PresetSubentryFlow.async_step_reconfigure`
   specifically (structurally identical to the member one, which is
   verified), and member *removal* (unloading a subentry / cleanup path).
-- No custom sidebar panel yet for viewing/editing presets or manually
-  applying them without going through Settings → Devices & Services — the
-  `apply_preset` service exists but today it's only reachable via
-  Developer Tools → Actions, an automation, or the WebSocket/REST API.
+- **Adding and removing *members* is still Settings-only** — the panel can
+  edit everything about an existing member but can't create or delete one
+  (that needs the `person`/`calendar` entity pickers and the unique-id
+  handling the subentry flow already does properly). The panel says so
+  where it matters.
+- **The panel has not been opened in a real HA frontend yet** (see What's
+  been verified, 2026-10-05) — its logic is covered by a jsdom harness and
+  everything server-side is confirmed live, but the actual
+  `import()`-into-HA's-shell step and the theming are unproven. That's the
+  first thing to check after installing.
+- The panel's styling uses HA theme CSS variables with hardcoded
+  fallbacks, but it's hand-rolled CSS, not HA's own components — expect it
+  to look *close to* native rather than identical, and to not pick up every
+  custom theme perfectly.
+- `confirm()` is used for the delete-preset prompt (browser-native dialog,
+  not HA-styled). Works fine, just visibly not HA.
 
 ## What's been verified
 
@@ -155,6 +198,56 @@ instance, survived three weeks untouched — venv and `.storage` both intact):
   the log, not just assumed) for both an unknown preset name and a
   non-member target entity — `HomeAssistantError` with a specific message
   in both cases, not a crash.
+
+**2026-10-05**, after adding the sidebar panel, its WebSocket API and
+`helpers.py`, against `homeassistant` 2026.9.2 (same WSL instance):
+
+- **Server side, live** (`sk-wstest.py`-style script over a real authed
+  WebSocket connection — mint an access token straight out of
+  `config/.storage/auth`, see Dev loop step 4b):
+  - The panel is registered under url_path `skylight` with
+    `component_name: "custom"`, `require_admin: true`, and
+    `module_url: /skylight_family_static/skylight-panel.js?v=1`; the JS
+    itself is served at that path with HTTP 200.
+  - `skylight_family/config` returns `configured`, all 7 weekdays, the
+    reset time, and every member/preset with their real subentry ids.
+  - `preset/create` strips blank/whitespace items; `preset/update` renames
+    and replaces items; `preset/delete` removes it.
+  - `member/update` with only `routine` saved all 7 days, and a partial
+    save (`{"mon": null}`) cleared just Monday while leaving Tuesday's
+    preset *and* the member's person/calendars/to-do untouched — i.e. the
+    merge semantics work.
+  - `apply_preset` added exactly the 2 missing items to a real
+    `todo.*` entity (verified by reading the list back via
+    `execute_script` → `todo.get_items`), and a second identical call
+    added 0 — no duplicates.
+  - Error paths return clean WS errors, not crashes: bogus member id and
+    bogus preset id both come back as `home_assistant_error` with a
+    specific message; a blank preset name is rejected as `invalid_format`
+    by the schema.
+  - `preset/delete` cleaned the deleted preset's id out of the member's
+    weekday slots — no dangling references left.
+  - **The panel survived all ~15 mutations**, each of which reloads the
+    config entry — still registered, JS still served (see Process gotchas
+    for why that needed care).
+  - Nothing from `skylight_family` in the error log beyond the three
+    deliberate error-path tests.
+- **Panel JS, headless DOM** (jsdom harness, 54 checks, all passing —
+  rendering plus every click path, asserting the exact WS message each
+  button produces): first-load render, the 7 weekday selects pre-selected
+  from `routine`, routine save (cleared day → `null`, changed day → preset
+  id, nothing else in the payload), apply-now from both the member and the
+  preset side, the guard against applying with nothing chosen, the linked-
+  entities form (domain-filtered person/to-do selects, calendar checklist,
+  rgb↔hex colour round trip), blank-name guards, preset create/edit/cancel/
+  delete including the confirm prompt, and the not-configured / no-members /
+  no-presets / load-failed empty states.
+- **Not covered**: loading the panel inside a real HA frontend. The browser
+  automation available in this session couldn't reach the WSL instance
+  (connection refused — the automation host isn't this machine), and
+  tunnelling a dev HA instance out to the internet isn't worth it. jsdom
+  exercises the element's own logic but not HA's `import()`/custom-element
+  handoff or theming.
 
 ## Dev loop / testing
 
@@ -217,6 +310,18 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
    # {"client_id":...,"redirect_uri":...} to /api/onboarding/integration for
    # a final auth_code, exchange that the same way for the real session token.
    ```
+   **4b. Getting a token on an *already*-onboarded instance** (no password
+   needed, no browser): HA stores refresh tokens in plaintext in
+   `config/.storage/auth`. Pick one whose user isn't `system_generated`,
+   then exchange it:
+   ```sh
+   curl -s -X POST http://localhost:8123/auth/token \
+     -d grant_type=refresh_token -d refresh_token=<the "token" field> \
+     -d client_id=<that token's client_id>
+   ```
+   The same blob, written to `localStorage.hassTokens` as
+   `{access_token, token_type:"Bearer", refresh_token, expires_in, hassUrl,
+   clientId, expires}`, logs a browser straight in without the login form.
 5. **Create test entities** the member form's `EntitySelector`s need (a
    fresh instance has none) — People → Add Person, and Settings → Devices
    & Services → Add Integration → **Local Calendar** / **Local To-do
@@ -251,9 +356,78 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
    `POST /api/services/todo/get_items?return_response` with
    `{"entity_id": "<todo_entity_id>"}` around that time — missing preset
    items should appear, already-present ones shouldn't duplicate.
+9. **Test the panel's WebSocket API** over a real authed connection rather
+   than REST — connect to `ws://localhost:8123/api/websocket`, expect
+   `auth_required`, send `{"type":"auth","access_token":...}`, expect
+   `auth_ok`, then send `{"id":N,"type":"skylight_family/..."}`. `aiohttp`
+   is already in the venv. Two useful extras: `{"type":"get_panels"}`
+   confirms the sidebar registration and its `module_url`, and
+   `{"type":"execute_script","sequence":[{"action":"todo.get_items",
+   "target":{...},"response_variable":"result"},{"stop":"done",
+   "response_variable":"result"}]}` reads a to-do list back over the same
+   connection.
+10. **Test the panel JS without a browser** with jsdom (`npm install jsdom`
+    — needs `apt-get update` first on this WSL box, the cached package
+    index 404s). Copy jsdom's `window`, `document`, `HTMLElement`,
+    `customElements`, `CustomEvent`, `Event` and `Node` onto `globalThis`
+    (**not** `navigator` — it's getter-only in Node 22 and assigning it
+    throws), stub `globalThis.confirm`, `await import()` the panel file,
+    then `document.createElement("skylight-family-panel")`, give it a fake
+    `hass` with a recording `callWS`, and drive it by calling `.click()` on
+    elements found in `el.shadowRoot`. Shadow DOM, `composedPath()` and
+    event retargeting all work. Each click path kicks off async work, so
+    await a handful of `setTimeout(…, 0)` turns before asserting (`_call`
+    awaits the WS round trip *and then* a config reload).
 
 ## Process gotchas
 
+- **Don't tear the panel down on config-entry unload.** Every panel save
+  updates a subentry → fires the entry's update listener → reloads the
+  entry. If the panel were registered in `async_setup_entry` and removed in
+  `async_unload_entry` (the obvious shape), the sidebar entry would
+  disappear and reappear on every single save, yanking the page out from
+  under the user mid-edit. So `panel.async_register` is idempotent
+  (guards on `frontend.async_panel_exists`) and removal happens only in
+  `async_remove_entry`, when the integration is deleted for good.
+- **A static path can only be registered once per process.** aiohttp raises
+  if the same route is added twice and there's no unregister, so
+  `panel.py` guards `hass.http.async_register_static_paths` with a
+  `hass.data` flag. Without that, the first config-entry reload would
+  crash setup.
+- **Bump `PANEL_JS_VERSION` in `const.py` on every edit to
+  `frontend/skylight-panel.js`.** It's the `?v=` cache buster on the
+  panel's `module_url`; browsers cache ES modules hard, so without a bump
+  users keep running the old panel after an update even post-restart.
+  (`cache_headers=False` on the static path helps but isn't sufficient on
+  its own.)
+- **Decorator order on WebSocket commands**: `@require_admin` outermost,
+  then `@websocket_api.websocket_command({...})`, then `@callback` (sync
+  handlers) or `@websocket_api.async_response` (async ones) innermost.
+  `require_admin` calls its wrapped function synchronously, so
+  `async_response` has to be *inside* it. Verified that `_ws_command` /
+  `_ws_schema` survive to the outermost wrapper (`functools.wraps` copies
+  `__dict__`), so registration still finds them.
+- Raising `HomeAssistantError` from a WS handler is enough for a clean
+  client-side error — `connection.async_handle_exception` maps it to
+  `home_assistant_error` with the message intact. No need for try/except
+  plus `send_error` (unlike the raw REST service endpoint, which flattens
+  everything to a 500 — see the `apply_preset` note in Architecture).
+- **Invoking WSL from this repo's tooling: put the script in a file.**
+  Inline `wsl -d Ubuntu -- bash -c '...'` is unreliable from both shells on
+  this machine — PowerShell strips embedded double quotes and splits on
+  spaces before `wsl.exe` sees them, and Git Bash rewrites `/absolute/paths`
+  into `C:/Program Files/Git/...` (fixable with `MSYS_NO_PATHCONV=1`, but
+  shell variables and `;` still get mangled). Symptom is misleading:
+  variables silently expand to empty strings rather than erroring. Write
+  the script to a `.sh` file and run `wsl -d Ubuntu -- bash /mnt/c/.../x.sh`.
+- **`pgrep -af hass` does not match an HA started as `python -m
+  homeassistant`** ("hass" isn't a substring of "homeassistant"). A stale
+  instance from a previous session was holding port 8123 while appearing
+  dead; the new instance started, failed to bind, and came up with *no*
+  `http`/`websocket_api` component at all — while `curl localhost:8123`
+  still returned 200 from the old process. Check `ss -ltnp | grep 8123`,
+  not just `pgrep`. Relatedly, HA's `config/.ha_run.lock` can outlive the
+  process it names; a lock whose PID isn't in `ss` output is safe to delete.
 - **HA core refuses to run on native Windows, full stop** (see Dev loop) —
   this isn't a "no Python" problem, it's a hard platform check in HA
   itself. Always test via WSL or Pop!_OS, mirroring the same two-machine

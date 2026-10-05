@@ -6,6 +6,10 @@ that get re-applied to each member's to-do list every morning. This
 integration owns no calendar/todo data itself — it points at entities HA
 already has and lets Skylight HA (a separate wall-tablet app) read the
 mapping via `sensor.skylight_family_<member>`.
+
+Day-to-day management happens in the "Skylight" sidebar panel (see
+`panel.py` / `websocket_api.py`); Settings -> Devices & Services still works
+for the same things via the config subentry flows.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
+from . import panel, websocket_api
 from .const import (
     ATTR_PRESET,
     BUILTIN_PRESETS,
@@ -37,6 +42,14 @@ from .const import (
     SUBENTRY_TYPE_PRESET,
     WEEKDAY_PRESET_FIELDS,
     WEEKDAYS,
+)
+from .helpers import (
+    async_apply_items,
+    async_clear_completed,
+    async_apply_preset_to_member,
+    get_entry,
+    members,
+    presets,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,20 +65,19 @@ APPLY_PRESET_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the skylight_family.apply_preset service once, domain-wide."""
+    """Register the domain-wide pieces: the service and the panel's API."""
 
     async def _handle_apply_preset(call: ServiceCall) -> None:
-        entry = _get_the_entry(hass)
+        entry = get_entry(hass)
         if entry is None:
             raise HomeAssistantError("Skylight Family is not configured")
 
         preset_name = call.data[ATTR_PRESET].strip().lower()
         preset_subentry = next(
             (
-                s
-                for s in entry.subentries.values()
-                if s.subentry_type == SUBENTRY_TYPE_PRESET
-                and s.title.strip().lower() == preset_name
+                subentry
+                for subentry in presets(entry)
+                if subentry.title.strip().lower() == preset_name
             ),
             None,
         )
@@ -88,30 +100,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     f"{entity_id} is not a Skylight Family member"
                 )
 
-            todo_entity_id = member_subentry.data.get(CONF_TODO)
-            if not todo_entity_id:
-                raise HomeAssistantError(
-                    f"{member_subentry.title} has no to-do list configured"
-                )
-
-            await _reset_todo_list(
-                hass, todo_entity_id, preset_subentry.data.get(CONF_PRESET_ITEMS, [])
+            await async_apply_preset_to_member(
+                hass, member_subentry, preset_subentry
             )
 
     hass.services.async_register(
         DOMAIN, SERVICE_APPLY_PRESET, _handle_apply_preset, schema=APPLY_PRESET_SCHEMA
     )
+    websocket_api.async_register(hass)
     return True
-
-
-def _get_the_entry(hass: HomeAssistant) -> ConfigEntry | None:
-    entries = hass.config_entries.async_entries(DOMAIN)
-    return entries[0] if entries else None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _seed_builtin_presets(hass, entry)
 
+    await panel.async_register(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     reset_time = dt_util.parse_time(
@@ -140,7 +143,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # The panel is intentionally left registered — see panel.py.
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Take the sidebar entry away when the integration is removed for good."""
+    panel.async_remove(hass)
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -153,11 +162,7 @@ def _seed_builtin_presets(hass: HomeAssistant, entry: ConfigEntry) -> None:
     After this they're just regular subentries — editable/deletable the
     same as anything the user creates themselves.
     """
-    has_presets = any(
-        subentry.subentry_type == SUBENTRY_TYPE_PRESET
-        for subentry in entry.subentries.values()
-    )
-    if has_presets:
+    if presets(entry):
         return
 
     for name, items in BUILTIN_PRESETS.items():
@@ -177,74 +182,19 @@ async def _apply_daily_reset(hass: HomeAssistant, entry: ConfigEntry) -> None:
     whichever preset (if any) is assigned to today's weekday."""
     presets_by_id = {
         subentry.subentry_id: subentry.data.get(CONF_PRESET_ITEMS, [])
-        for subentry in entry.subentries.values()
-        if subentry.subentry_type == SUBENTRY_TYPE_PRESET
+        for subentry in presets(entry)
     }
     today_key = WEEKDAYS[dt_util.now().weekday()][0]
     today_field = WEEKDAY_PRESET_FIELDS[today_key]
 
-    for subentry in entry.subentries.values():
-        if subentry.subentry_type != SUBENTRY_TYPE_MEMBER:
-            continue
-
+    for subentry in members(entry):
         todo_entity_id = subentry.data.get(CONF_TODO)
         if not todo_entity_id:
             continue
 
-        await _clear_completed_items(hass, todo_entity_id)
+        await async_clear_completed(hass, todo_entity_id)
 
         preset_id = subentry.data.get(today_field)
         items = presets_by_id.get(preset_id, []) if preset_id else []
         if items:
-            await _reset_todo_list(hass, todo_entity_id, items)
-
-
-async def _clear_completed_items(hass: HomeAssistant, todo_entity_id: str) -> None:
-    try:
-        await hass.services.async_call(
-            "todo",
-            "remove_completed_items",
-            {},
-            target={"entity_id": todo_entity_id},
-            blocking=True,
-        )
-    except Exception:  # noqa: BLE001 - entity may not support deletion
-        _LOGGER.warning(
-            "Could not clear completed items from %s", todo_entity_id
-        )
-
-
-async def _reset_todo_list(
-    hass: HomeAssistant, todo_entity_id: str, preset_items: list[str]
-) -> None:
-    try:
-        response = await hass.services.async_call(
-            "todo",
-            "get_items",
-            {},
-            target={"entity_id": todo_entity_id},
-            blocking=True,
-            return_response=True,
-        )
-    except Exception:  # noqa: BLE001 - entity may be temporarily unavailable
-        _LOGGER.warning(
-            "Could not read existing items from %s, skipping preset reset",
-            todo_entity_id,
-        )
-        return
-
-    existing = {
-        item["summary"]
-        for item in (response or {}).get(todo_entity_id, {}).get("items", [])
-    }
-
-    for item in preset_items:
-        if item in existing:
-            continue
-        await hass.services.async_call(
-            "todo",
-            "add_item",
-            {"item": item},
-            target={"entity_id": todo_entity_id},
-            blocking=True,
-        )
+            await async_apply_items(hass, todo_entity_id, items)
