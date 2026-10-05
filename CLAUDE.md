@@ -78,7 +78,21 @@ it.
   Linked entities form for name/person/to-do/calendars/colour) and
   *Presets* (view/add/edit/delete presets, plus apply-to-a-member from that
   side too). Registered via `panel_custom.async_register_panel` with
-  `component_name="custom"`, `embed_iframe=False`, `require_admin=True`.
+  `component_name="custom"` and `embed_iframe=False`.
+- **`panel_admin_only` option** (default on) — the integration owns this
+  because HA core ships no UI that can set `require_admin` on a *custom*
+  panel (see Process gotchas). It gates **both** who sees the sidebar entry
+  and who may write from it: the WS mutations call
+  `helpers.check_panel_write_access` instead of wearing a flat
+  `@websocket_api.require_admin`, because the panel is an editor with no
+  read-only mode and handing a non-admin a page where every button returns
+  "Unauthorized" would be worse than not showing it at all. The read
+  (`skylight_family/config`) is never gated.
+  `panel.async_register(hass, admin_only=...)` stays idempotent, but when
+  the flag differs from what's registered it removes and re-adds the panel
+  (`panel_custom.async_register_panel` has no `update=` parameter). That's
+  the only path that removes the panel outside integration removal, and it
+  only runs when the user actually flips the setting.
 - **The panel's own WebSocket API** (`websocket_api.py`), registered
   domain-wide in `async_setup`: `skylight_family/config` (one round trip for
   everything the panel draws — members, presets, weekday list, reset time),
@@ -242,6 +256,16 @@ instance, survived three weeks untouched — venv and `.storage` both intact):
   rgb↔hex colour round trip), blank-name guards, preset create/edit/cancel/
   delete including the confirm prompt, and the not-configured / no-members /
   no-presets / load-failed empty states.
+- **The `panel_admin_only` option, live, with a real non-admin user**
+  (created via `config/auth/create` +
+  `config/auth_provider/homeassistant/create`, then logged in through
+  `/auth/login_flow` for its own token — the `skylight_test_kid` user left
+  on the WSL instance is there for exactly this): with the option on, the
+  non-admin couldn't see the panel in `get_panels` *and* got `unauthorized`
+  on a write; after flipping it off through the real options flow, the
+  same user saw the panel, could read, and could write; flipping it back on
+  restored both refusals. Title, icon and `module_url` all survived the
+  remove-and-re-add.
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
   (connection refused — the automation host isn't this machine), and
@@ -381,6 +405,22 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
 
 ## Process gotchas
 
+- **There is no HA UI for toggling `require_admin` on a custom panel, and
+  Settings → Dashboards is not it.** HA core *does* have a persistent,
+  admin-only `frontend/update_panel` WS command that overrides a panel's
+  `title`/`icon`/`require_admin`/`show_in_sidebar` (verified working
+  against our panel — the override is stored separately from the panel
+  registration, so it survives restarts and wins over whatever the
+  integration registered). But the only page that calls it iterates a
+  hardcoded allow-list:
+  ```ts
+  // frontend/src/panels/config/lovelace/dashboards/ha-config-lovelace-dashboards.ts
+  export const PANEL_DASHBOARDS = ["home","light","security","climate","energy","maintenance"];
+  ```
+  so a custom panel never appears there. Don't tell the user to look in
+  Settings → Dashboards (this was gotten wrong once, from seeing the WS
+  command plus a `require_admin` table column and inferring a UI that
+  doesn't apply to us). Hence the `panel_admin_only` option.
 - **Don't tear the panel down on config-entry unload.** Every panel save
   updates a subentry → fires the entry's update listener → reloads the
   entry. If the panel were registered in `async_setup_entry` and removed in

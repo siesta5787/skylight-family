@@ -32,9 +32,11 @@ from . import panel, websocket_api
 from .const import (
     ATTR_PRESET,
     BUILTIN_PRESETS,
+    CONF_PANEL_ADMIN_ONLY,
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
     CONF_TODO,
+    DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
     DOMAIN,
     SERVICE_APPLY_PRESET,
@@ -114,7 +116,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _seed_builtin_presets(hass, entry)
 
-    await panel.async_register(hass)
+    await panel.async_register(
+        hass,
+        admin_only=entry.options.get(
+            CONF_PANEL_ADMIN_ONLY, DEFAULT_PANEL_ADMIN_ONLY
+        ),
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     reset_time = dt_util.parse_time(

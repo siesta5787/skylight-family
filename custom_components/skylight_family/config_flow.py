@@ -26,10 +26,12 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_CALENDARS,
     CONF_COLOR,
+    CONF_PANEL_ADMIN_ONLY,
     CONF_PERSON,
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
     CONF_TODO,
+    DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
@@ -78,14 +80,19 @@ class SkylightFamilyOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
+        options = self.config_entry.options
         schema = vol.Schema(
             {
                 vol.Required(
                     CONF_RESET_TIME,
-                    default=self.config_entry.options.get(
-                        CONF_RESET_TIME, DEFAULT_RESET_TIME
-                    ),
+                    default=options.get(CONF_RESET_TIME, DEFAULT_RESET_TIME),
                 ): selector.TimeSelector(),
+                vol.Required(
+                    CONF_PANEL_ADMIN_ONLY,
+                    default=options.get(
+                        CONF_PANEL_ADMIN_ONLY, DEFAULT_PANEL_ADMIN_ONLY
+                    ),
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

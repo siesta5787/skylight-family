@@ -10,12 +10,15 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.auth.models import User
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, Unauthorized
 
 from .const import (
+    CONF_PANEL_ADMIN_ONLY,
     CONF_PRESET_ITEMS,
     CONF_TODO,
+    DEFAULT_PANEL_ADMIN_ONLY,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
@@ -36,6 +39,25 @@ def require_entry(hass: HomeAssistant) -> ConfigEntry:
     if entry is None:
         raise HomeAssistantError("Skylight Family is not configured")
     return entry
+
+
+def panel_is_admin_only(hass: HomeAssistant) -> bool:
+    entry = get_entry(hass)
+    if entry is None:
+        return DEFAULT_PANEL_ADMIN_ONLY
+    return entry.options.get(CONF_PANEL_ADMIN_ONLY, DEFAULT_PANEL_ADMIN_ONLY)
+
+
+def check_panel_write_access(hass: HomeAssistant, user: User | None) -> None:
+    """Gate the panel's write commands on the same switch as the sidebar.
+
+    Deliberately *not* a flat `@require_admin`: the panel is an editor with
+    no read-only mode, so if someone turns the admin-only setting off to let
+    the rest of the household use it, they need to be able to actually use
+    it rather than hit "Unauthorized" on every button.
+    """
+    if user is None or (panel_is_admin_only(hass) and not user.is_admin):
+        raise Unauthorized
 
 
 def subentries_of(entry: ConfigEntry, subentry_type: str) -> list[ConfigSubentry]:

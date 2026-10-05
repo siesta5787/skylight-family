@@ -5,8 +5,11 @@ Settings -> Devices & Services manages — these commands are thin wrappers
 over `hass.config_entries` subentry operations, so anything done from the
 panel shows up in Settings and vice versa.
 
-Mutations require admin. The read doesn't, leaving room to show a household
-member their own routine read-only later on.
+Writes are gated on the integration's own "admin only" option (the same
+switch that controls who sees the sidebar entry) rather than a flat
+`@require_admin`, so turning that off actually hands the panel to the rest
+of the household instead of showing them a page where every button fails.
+The read is never gated.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from .const import (
 )
 from .helpers import (
     async_apply_preset_to_member,
+    check_panel_write_access,
     get_entry,
     members,
     presets,
@@ -138,7 +142,6 @@ def ws_get_config(
     )
 
 
-@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_PRESET_CREATE,
@@ -153,6 +156,7 @@ def ws_preset_create(
     msg: dict[str, Any],
 ) -> None:
     """Add a preset — same result as the 'Add preset' subentry flow."""
+    check_panel_write_access(hass, connection.user)
     entry = require_entry(hass)
     subentry = ConfigSubentry(
         data={CONF_PRESET_ITEMS: _clean_items(msg["items"])},
@@ -164,7 +168,6 @@ def ws_preset_create(
     connection.send_result(msg["id"], _preset_payload(subentry))
 
 
-@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_PRESET_UPDATE,
@@ -180,6 +183,7 @@ def ws_preset_update(
     msg: dict[str, Any],
 ) -> None:
     """Rename a preset and/or replace its item list wholesale."""
+    check_panel_write_access(hass, connection.user)
     entry = require_entry(hass)
     subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_PRESET)
     hass.config_entries.async_update_subentry(
@@ -191,7 +195,6 @@ def ws_preset_update(
     connection.send_result(msg["id"], _preset_payload(subentry))
 
 
-@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_PRESET_DELETE,
@@ -210,6 +213,7 @@ def ws_preset_delete(
     weekday, which reads as "a preset is set" in the UI while the daily job
     silently applies nothing.
     """
+    check_panel_write_access(hass, connection.user)
     entry = require_entry(hass)
     preset_id = msg["subentry_id"]
     require_subentry(entry, preset_id, SUBENTRY_TYPE_PRESET)
@@ -231,7 +235,6 @@ def ws_preset_delete(
     connection.send_result(msg["id"], {"removed": preset_id})
 
 
-@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_MEMBER_UPDATE,
@@ -256,6 +259,7 @@ def ws_member_update(
     routine without round-tripping (and risking clobbering) the person,
     calendar and colour fields it isn't editing at the time.
     """
+    check_panel_write_access(hass, connection.user)
     entry = require_entry(hass)
     subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_MEMBER)
 
@@ -289,7 +293,6 @@ def ws_member_update(
     connection.send_result(msg["id"], _member_payload(subentry))
 
 
-@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_APPLY_PRESET,
@@ -304,6 +307,7 @@ async def ws_apply_preset(
     msg: dict[str, Any],
 ) -> None:
     """Push a preset onto a member's to-do list now, outside the daily job."""
+    check_panel_write_access(hass, connection.user)
     entry = require_entry(hass)
     member = require_subentry(entry, msg["member_id"], SUBENTRY_TYPE_MEMBER)
     preset = require_subentry(entry, msg["preset_id"], SUBENTRY_TYPE_PRESET)

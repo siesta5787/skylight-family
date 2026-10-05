@@ -15,7 +15,11 @@
       "init": {
         "title": "Skylight Family settings",
         "data": {
-          "reset_time": "Daily reset time (clears completed items and applies today's presets)"
+          "reset_time": "Daily reset time (clears completed items and applies today's presets)",
+          "panel_admin_only": "Sidebar panel is admin only"
+        },
+        "data_description": {
+          "panel_admin_only": "When off, any Home Assistant user can see the Skylight panel in the sidebar and change routines and presets from it."
         }
       }
     }

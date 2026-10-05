@@ -29,6 +29,13 @@ CONF_PRESET_ITEMS = "items"
 # Entry options
 CONF_RESET_TIME = "reset_time"
 DEFAULT_RESET_TIME = "04:00:00"
+# Whether the sidebar panel is admin-only. HA core has no UI that can toggle
+# this for a custom panel — Settings -> Dashboards only lists six hardcoded
+# built-in panels (frontend's PANEL_DASHBOARDS) — so we own the setting.
+# It gates both who sees the sidebar entry and who may change anything from
+# it, since the panel is an editor with no read-only mode.
+CONF_PANEL_ADMIN_ONLY = "panel_admin_only"
+DEFAULT_PANEL_ADMIN_ONLY = True
 
 # Service: skylight_family.apply_preset
 SERVICE_APPLY_PRESET = "apply_preset"

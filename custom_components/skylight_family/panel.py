@@ -35,10 +35,17 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _STATIC_REGISTERED = f"{DOMAIN}_static_registered"
+_REGISTERED_ADMIN_ONLY = f"{DOMAIN}_panel_admin_only"
 
 
-async def async_register(hass: HomeAssistant) -> None:
-    """Serve the panel's JS and add the sidebar entry. Safe to call twice."""
+async def async_register(hass: HomeAssistant, admin_only: bool) -> None:
+    """Serve the panel's JS and add the sidebar entry. Safe to call twice.
+
+    `admin_only` comes from the integration's own options, because HA core
+    has no UI that can toggle `require_admin` on a *custom* panel: the
+    Settings -> Dashboards page that exposes it only iterates a hardcoded
+    allow-list of six built-in panels.
+    """
     if not hass.data.get(_STATIC_REGISTERED):
         frontend_dir = Path(__file__).parent / "frontend"
         await hass.http.async_register_static_paths(
@@ -58,7 +65,13 @@ async def async_register(hass: HomeAssistant) -> None:
         hass.data[_STATIC_REGISTERED] = True
 
     if frontend.async_panel_exists(hass, PANEL_URL_PATH):
-        return
+        if hass.data.get(_REGISTERED_ADMIN_ONLY) == admin_only:
+            return
+        # Only path that re-registers: the user actually flipped the
+        # setting. `panel_custom.async_register_panel` has no "update"
+        # option, so take the panel away first — brief, and it happens
+        # while they're sitting in Settings, not on the panel itself.
+        frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
 
     await panel_custom.async_register_panel(
         hass,
@@ -68,9 +81,12 @@ async def async_register(hass: HomeAssistant) -> None:
         sidebar_icon=PANEL_ICON,
         module_url=f"{PANEL_STATIC_URL}/{PANEL_FILENAME}?v={PANEL_JS_VERSION}",
         embed_iframe=False,
-        require_admin=True,
+        require_admin=admin_only,
     )
-    _LOGGER.debug("Registered the %s sidebar panel", PANEL_URL_PATH)
+    hass.data[_REGISTERED_ADMIN_ONLY] = admin_only
+    _LOGGER.debug(
+        "Registered the %s sidebar panel (admin_only=%s)", PANEL_URL_PATH, admin_only
+    )
 
 
 @callback
@@ -78,3 +94,4 @@ def async_remove(hass: HomeAssistant) -> None:
     """Drop the sidebar entry — only on integration removal, not reload."""
     if frontend.async_panel_exists(hass, PANEL_URL_PATH):
         frontend.async_remove_panel(hass, PANEL_URL_PATH)
+    hass.data.pop(_REGISTERED_ADMIN_ONLY, None)

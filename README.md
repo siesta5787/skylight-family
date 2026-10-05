@@ -33,7 +33,8 @@ what*, Skylight HA owns the *display*.
 
   It's a view of the same data as Settings → Devices & Services, not a
   parallel store, so you can use either. Adding and removing *members*
-  still happens in Settings.
+  still happens in Settings. Admin-only by default, switchable from the
+  integration's Configure page.
 - **A `sensor.skylight_family_<name>` per member** — the only new state
   this integration creates, carrying the mapping (`person_entity_id`,
   `calendar_entity_ids`,
@@ -68,9 +69,13 @@ Or by hand: copy `custom_components/skylight_family/` into your HA config's
    Add/Edit/Remove all happen through their own dialogs.
 3. After that, use the **Skylight** entry in the sidebar for day-to-day
    work — weekday routines, presets, and pushing a preset to someone now.
-   (It's admin-only, and it's a separate page from HA's built-in "To-do
-   Lists"; if you'd rather only see one of them, hide the other by
-   long-pressing the sidebar and editing it.)
+   It's a separate page from HA's built-in "To-do Lists"; if you'd rather
+   see only one of them, hide the other by long-pressing the sidebar and
+   editing it.
+4. The integration's **Configure** page has two settings: the daily reset
+   time, and whether the sidebar panel is **admin only** (on by default).
+   Turn it off to let any Home Assistant user open the panel and change
+   routines and presets from it.
 
 ## Development
 
