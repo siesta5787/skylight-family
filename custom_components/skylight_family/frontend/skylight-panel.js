@@ -976,40 +976,65 @@ class SkylightFamilyPanel extends HTMLElement {
           data-kind="deposit" ${this._busy ? "disabled" : ""}>Deposit</button>
         <button class="action" data-action="money-form" data-member="${esc(id)}"
           data-kind="expense" ${this._busy ? "disabled" : ""}>Expense</button>
+        <button class="action" data-action="money-form" data-member="${esc(id)}"
+          data-kind="transfer" ${this._busy ? "disabled" : ""}>Transfer</button>
         <span class="spacer"></span>
         <button class="action" data-action="ledger" data-member="${esc(id)}">Ledger &rarr;</button>
       </div>`;
   }
 
   _renderMoneyForm(memberId) {
-    const { kind } = this._moneyForm;
+    const { kind, entry } = this._moneyForm;
     const today = (this._money && this._money.today) || "";
+    const transfer = kind === "transfer";
+    const editing = !!entry;
+    const accountOptions = (selected) =>
+      `<option value="short"${selected === "short" ? " selected" : ""}>Short term</option>
+       <option value="long"${selected === "long" ? " selected" : ""}>Long term</option>`;
+
+    const verb = transfer ? "transfer" : kind === "deposit" ? "deposit" : "expense";
+    const placeholder = transfer
+      ? "Moving to savings"
+      : kind === "deposit"
+        ? "Allowance"
+        : "Comic book";
+
     return `<div data-money-form="${esc(memberId)}" class="money-form">
+      ${editing ? `<p class="sub">Editing an existing ${esc(verb)}</p>` : ""}
       <div class="field">
-        <label>Account</label>
-        <select data-field="account">
-          <option value="short">Short term</option>
-          <option value="long">Long term</option>
-        </select>
+        <label>${transfer ? "From" : "Account"}</label>
+        <select data-field="account">${accountOptions(entry ? entry.account : "short")}</select>
       </div>
+      ${
+        transfer
+          ? `<div class="field">
+              <label>To</label>
+              <select data-field="to_account">${accountOptions(
+                (entry && entry.to_account) || "long",
+              )}</select>
+            </div>`
+          : ""
+      }
       <div class="field">
         <label>Amount</label>
         <input type="number" inputmode="decimal" step="0.01" min="0.01"
-          placeholder="0.00" data-field="amount">
+          placeholder="0.00" data-field="amount"
+          value="${entry ? esc((entry.amount_cents / 100).toFixed(2)) : ""}">
       </div>
       <div class="field">
         <label>Date</label>
-        <input type="date" data-field="date" value="${esc(today)}" max="${esc(today)}">
+        <input type="date" data-field="date"
+          value="${esc(entry ? entry.date : today)}" max="${esc(today)}">
       </div>
       <div class="field">
         <label>Note</label>
-        <input type="text" data-field="note"
-          placeholder="${kind === "deposit" ? "Allowance" : "Comic book"}">
+        <input type="text" data-field="note" placeholder="${esc(placeholder)}"
+          value="${entry ? esc(entry.note || "") : ""}">
       </div>
       <div class="row">
         <button class="action primary" data-action="money-save" data-member="${esc(memberId)}"
           data-kind="${esc(kind)}" ${this._busy ? "disabled" : ""}>
-          Save ${kind === "deposit" ? "deposit" : "expense"}</button>
+          ${editing ? "Save changes" : `Save ${esc(verb)}`}</button>
         <button class="action" data-action="money-cancel">Cancel</button>
       </div>
     </div>`;
@@ -1049,6 +1074,8 @@ class SkylightFamilyPanel extends HTMLElement {
           data-kind="deposit" ${this._busy ? "disabled" : ""}>Deposit</button>
         <button class="action" data-action="money-form" data-member="${esc(id)}"
           data-kind="expense" ${this._busy ? "disabled" : ""}>Expense</button>
+        <button class="action" data-action="money-form" data-member="${esc(id)}"
+          data-kind="transfer" ${this._busy ? "disabled" : ""}>Transfer</button>
       </div>
       <div class="card">
         ${
@@ -1064,12 +1091,37 @@ class SkylightFamilyPanel extends HTMLElement {
     </div>`;
   }
 
+  /** How much a row moves the account whose ledger it's appearing in. */
+  _rowDelta(row, side) {
+    if (row.kind === "expense") return -row.amount_cents;
+    if (row.kind === "transfer") {
+      return row.account === side ? -row.amount_cents : row.amount_cents;
+    }
+    return row.amount_cents;
+  }
+
+  _transferLabel(row, side) {
+    const name = (account) => (account === "long" ? "long term" : "short term");
+    return row.account === side
+      ? `Transfer to ${name(row.to_account)}`
+      : `Transfer from ${name(row.account)}`;
+  }
+
   _renderLedgerRow(row, memberId, showAccount, rate) {
     const interest = row.kind === "interest";
-    const signed = row.kind === "expense" ? -row.amount_cents : row.amount_cents;
-    const label = interest
+    const side = row.ledger_account || row.account;
+    const signed = this._rowDelta(row, side);
+    const defaultLabel = interest
       ? `Interest${rate ? ` (${rate}% ÷ 52)` : ""}`
-      : row.note || (row.kind === "deposit" ? "Deposit" : "Expense");
+      : row.kind === "deposit"
+        ? "Deposit"
+        : "Expense";
+    // A transfer's own label is more useful than a note here, so the note
+    // (if any) rides alongside it rather than replacing it.
+    const label =
+      row.kind === "transfer"
+        ? `${this._transferLabel(row, side)}${row.note ? ` — ${row.note}` : ""}`
+        : row.note || defaultLabel;
 
     return `<tr class="${interest ? "derived" : ""}">
       <td class="when">${esc(this._fmtDate(row.date))}</td>
@@ -1084,7 +1136,10 @@ class SkylightFamilyPanel extends HTMLElement {
       <td class="running">${esc(this._fmt(row.balance_cents))}</td>
       <td class="del">${
         row.id
-          ? `<button class="action danger" data-action="money-delete"
+          ? `<button class="action" data-action="money-edit"
+               data-member="${esc(memberId)}" data-entry="${esc(row.id)}"
+               title="Edit this entry" ${this._busy ? "disabled" : ""}>✎</button>
+             <button class="action danger" data-action="money-delete"
                data-member="${esc(memberId)}" data-entry="${esc(row.id)}"
                title="Delete this entry" ${this._busy ? "disabled" : ""}>✕</button>`
           : ""
@@ -1193,21 +1248,40 @@ class SkylightFamilyPanel extends HTMLElement {
       return;
     }
 
+    const existing = this._moneyForm && this._moneyForm.entry;
+    const message = {
+      type: existing
+        ? "skylight_family/money/update"
+        : "skylight_family/money/add",
+      subentry_id: memberId,
+      account: value("account"),
+      kind,
+      amount_cents: Math.round(amount * 100),
+      date,
+      note: value("note").trim(),
+    };
+    if (existing) message.entry_id = existing.id;
+    if (kind === "transfer") {
+      message.to_account = value("to_account");
+      if (message.to_account === message.account) {
+        this._notify("Skylight: a transfer needs two different accounts");
+        return;
+      }
+    }
+
     this._moneyForm = null;
     this._call(
-      {
-        type: "skylight_family/money/add",
-        subentry_id: memberId,
-        account: value("account"),
-        kind,
-        amount_cents: Math.round(amount * 100),
-        date,
-        note: value("note").trim(),
-      },
+      message,
       (result) =>
-        `${result.kind === "deposit" ? "Deposited" : "Recorded"} ${this._fmt(
-          result.amount_cents,
-        )}`,
+        existing
+          ? `Updated — ${this._fmt(result.amount_cents)}`
+          : `${
+              result.kind === "deposit"
+                ? "Deposited"
+                : result.kind === "transfer"
+                  ? "Transferred"
+                  : "Recorded"
+            } ${this._fmt(result.amount_cents)}`,
       this._afterMoneyChange,
     );
   }
@@ -1355,6 +1429,19 @@ class SkylightFamilyPanel extends HTMLElement {
       const open = this._moneyForm;
       this._moneyForm =
         open && open.member === member && open.kind === kind ? null : { member, kind };
+      this._render();
+      return;
+    }
+    if (action === "money-edit") {
+      const entry = (this._ledger ? this._ledger.rows : []).find(
+        (row) => row.id === target.dataset.entry,
+      );
+      if (!entry) return;
+      this._moneyForm = {
+        member: target.dataset.member,
+        kind: entry.kind,
+        entry,
+      };
       this._render();
       return;
     }

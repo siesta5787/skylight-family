@@ -42,6 +42,7 @@ from .const import (
     DEFAULT_RESET_TIME,
     DEFAULT_STAR_GOAL,
     DOMAIN,
+    ENTRY_KINDS,
     KIND_DEPOSIT,
     KIND_EXPENSE,
     SUBENTRY_TYPE_MEMBER,
@@ -78,6 +79,7 @@ WS_SET_STAR = f"{DOMAIN}/rewards/set_star"
 WS_MONEY = f"{DOMAIN}/money"
 WS_MONEY_LEDGER = f"{DOMAIN}/money/ledger"
 WS_MONEY_ADD = f"{DOMAIN}/money/add"
+WS_MONEY_UPDATE = f"{DOMAIN}/money/update"
 WS_MONEY_DELETE = f"{DOMAIN}/money/delete"
 
 _WEEKDAY_KEYS = [key for key, _label in WEEKDAYS]
@@ -103,6 +105,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_money,
         ws_money_ledger,
         ws_money_add,
+        ws_money_update,
         ws_money_delete,
     ):
         websocket_api.async_register_command(hass, handler)
@@ -530,7 +533,9 @@ def ws_money_ledger(
         vol.Required("type"): WS_MONEY_ADD,
         vol.Required("subentry_id"): str,
         vol.Required("account"): vol.In(ACCOUNTS),
-        vol.Required("kind"): vol.In((KIND_DEPOSIT, KIND_EXPENSE)),
+        vol.Required("kind"): vol.In(ENTRY_KINDS),
+        # Only meaningful for a transfer; validated in the store.
+        vol.Optional("to_account"): vol.In(ACCOUNTS),
         vol.Required("amount_cents"): vol.All(int, vol.Range(min=1)),
         vol.Required("date"): cv.date,
         vol.Optional("note", default=""): str,
@@ -552,12 +557,54 @@ async def ws_money_add(
     added = await entry.runtime_data.money.async_add(
         member_id=subentry.subentry_id,
         account=msg["account"],
+        to_account=msg.get("to_account"),
         kind=msg["kind"],
         amount_cents=msg["amount_cents"],
         day=msg["date"],
         note=msg["note"],
     )
     connection.send_result(msg["id"], added)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_MONEY_UPDATE,
+        vol.Required("subentry_id"): str,
+        vol.Required("entry_id"): str,
+        vol.Required("account"): vol.In(ACCOUNTS),
+        vol.Required("kind"): vol.In(ENTRY_KINDS),
+        vol.Optional("to_account"): vol.In(ACCOUNTS),
+        vol.Required("amount_cents"): vol.All(int, vol.Range(min=1)),
+        vol.Required("date"): cv.date,
+        vol.Optional("note", default=""): str,
+    }
+)
+@websocket_api.async_response
+async def ws_money_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Rewrite an existing entry, keeping its id. Every field is replaced,
+    so turning a transfer back into a deposit can't leave a stale
+    destination account behind."""
+    check_panel_write_access(hass, connection.user)
+    entry = require_entry(hass)
+    subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_MEMBER)
+    if not money_enabled(subentry):
+        raise HomeAssistantError(f"Money tracking is turned off for {subentry.title}")
+
+    updated = await entry.runtime_data.money.async_update(
+        member_id=subentry.subentry_id,
+        entry_id=msg["entry_id"],
+        account=msg["account"],
+        to_account=msg.get("to_account"),
+        kind=msg["kind"],
+        amount_cents=msg["amount_cents"],
+        day=msg["date"],
+        note=msg["note"],
+    )
+    connection.send_result(msg["id"], updated)
 
 
 @websocket_api.websocket_command(

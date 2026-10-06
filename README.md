@@ -63,6 +63,11 @@ what*, Skylight HA owns the *display*.
     the date it happened and the interest earned since is recalculated —
     interest is always derived from the ledger rather than stored, so it
     can't drift.
+  - **Move money between the accounts** with a transfer — one entry, shown
+    on both sides of the ledger, so it can't half-exist.
+  - **Fix a mistake** by editing any entry: amount, note, date or account.
+    Changing the date is another way to put a forgotten entry where it
+    belongs.
   - The card shows both balances, interest earned so far, and a live
     *accruing* figure for the part-week that hasn't been credited yet. Tap
     it for the full ledger, where interest shows up as its own entries.

@@ -133,7 +133,7 @@
         },
         "kind": {
           "name": "Type",
-          "description": "Deposit adds to the balance, expense takes away."
+          "description": "Deposit adds to the balance, expense takes away, transfer moves between the two accounts."
         },
         "amount": {
           "name": "Amount",
@@ -146,6 +146,10 @@
         "note": {
           "name": "Note",
           "description": "What it was for, e.g. \"Allowance\"."
+        },
+        "to_account": {
+          "name": "Transfer to",
+          "description": "For a transfer only: the account the money moves into."
         }
       }
     }

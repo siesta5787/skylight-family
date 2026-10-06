@@ -39,6 +39,7 @@ from .const import (
     ATTR_KIND,
     ATTR_NOTE,
     ATTR_PRESET,
+    ATTR_TO_ACCOUNT,
     ATTR_STAR,
     BUILTIN_PRESETS,
     CONF_PANEL_ADMIN_ONLY,
@@ -53,8 +54,7 @@ from .const import (
     SERVICE_ADD_MONEY,
     SERVICE_APPLY_PRESET,
     SERVICE_SET_STAR,
-    KIND_DEPOSIT,
-    KIND_EXPENSE,
+    ENTRY_KINDS,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
     WEEKDAY_PRESET_FIELDS,
@@ -95,7 +95,9 @@ ADD_MONEY_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
         vol.Required(ATTR_ACCOUNT): vol.In(ACCOUNTS),
-        vol.Required(ATTR_KIND): vol.In((KIND_DEPOSIT, KIND_EXPENSE)),
+        vol.Required(ATTR_KIND): vol.In(ENTRY_KINDS),
+        # Required when kind is transfer; the ledger rejects it otherwise.
+        vol.Optional(ATTR_TO_ACCOUNT): vol.In(ACCOUNTS),
         # In currency units, e.g. 2.50 — converted to cents on the way in.
         vol.Required(ATTR_AMOUNT): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
         vol.Optional(ATTR_DATE): cv.date,
@@ -165,6 +167,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             await coordinator.async_add(
                 member_id=member_subentry.subentry_id,
                 account=call.data[ATTR_ACCOUNT],
+                to_account=call.data.get(ATTR_TO_ACCOUNT),
                 kind=call.data[ATTR_KIND],
                 amount_cents=amount_cents,
                 day=day,

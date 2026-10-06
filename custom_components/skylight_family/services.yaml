@@ -49,6 +49,18 @@ add_money:
               value: deposit
             - label: Expense
               value: expense
+            - label: Transfer
+              value: transfer
+    to_account:
+      # Only used when kind is transfer: the account the money moves into.
+      required: false
+      selector:
+        select:
+          options:
+            - label: Short term
+              value: short
+            - label: Long term
+              value: long
     amount:
       required: true
       example: 2.50

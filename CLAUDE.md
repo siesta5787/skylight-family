@@ -183,6 +183,17 @@ it.
     between Mondays instead of sitting still for a week.
   - Unlike the star store, the money store is **never pruned** — a ledger
     that forgets old entries would make today's balance wrong.
+  - **A transfer is one entry, not a paired expense and deposit.** It stores
+    `account` (source) and `to_account`, and `replay` reads it as negative on
+    one side and positive on the other, so it shows up in both accounts'
+    ledgers under the same id. One thing to edit, one thing to delete, and
+    no way to end up with half a transfer. Rows carry `ledger_account` so
+    the UI knows which side it's rendering and can say "Transfer to long
+    term" versus "Transfer from short term".
+  - **Editing replaces every field** rather than merging, so turning a
+    transfer back into a deposit can't leave a stale `to_account` behind for
+    `replay` to trip over. `MoneyStore._validated` is shared by add and
+    update so the two can't drift apart.
 - **Money entities**: `sensor.…_short_term` and `sensor.…_long_term` per
   tracked member, device class `monetary`, in `hass.config.currency`. The
   long-term one carries `interest_rate`, `interest_total`, `accruing` and
@@ -241,11 +252,9 @@ it.
 - The Rewards tab tracks the current week by holding `_rewardsWeek = null`
   rather than pinning today's Monday, so the panel left open overnight rolls
   over with the clock instead of getting stuck on yesterday's week.
-- **Money gaps**: no transfer between the two accounts (do it as an expense
-  plus a deposit), no editing an entry once written (delete and re-add), and
-  no interest on the short-term account by design. The ledger shows every
-  entry ever, with no paging — fine for a household, would want trimming if
-  it ran for years.
+- **Money gaps**: no interest on the short-term account (the user confirmed
+  they don't want it), and the ledger shows every entry ever with no paging —
+  fine for a household, would want trimming if it ran for years.
 - Reward tracking is per member and **off by default**, which means an
   existing install sees no new entities until it's switched on in the
   member's Settings form. That's deliberate (adults don't need stars), but
@@ -448,6 +457,27 @@ unit checks on the interest maths, and the panel suites grown accordingly:
   `money/ledger` shapes and asserts the row count, the delete buttons and
   the newest-first ordering match what the backend actually sent.
 
+**2026-10-06 (transfers and editing)** — 48 live money checks, the interest
+unit suite grown to 42, and the panel suites extended:
+
+- Transfers: money leaves the source and lands in the destination from a
+  single entry; both legs share one id and carry the right
+  `ledger_account`; money moved *into* long term then compounds from that
+  date (4000 → 4121 over three weeks at 1%/wk); deleting the entry undoes
+  both sides at once; a transfer to the same account or with no destination
+  is refused; and back-dating a transfer out of long term reduces the later
+  interest exactly as a back-dated expense does.
+- Editing: the id survives, amount/note/date/account are all rewritten,
+  balances follow, turning an entry into a transfer moves the money and
+  turning it back **drops the stale `to_account`**, editing the date is a
+  second route to back-dating (and changes the interest), and editing an
+  unknown id is refused.
+- Panel: transfer form shows From/To and blocks same-account transfers
+  locally; the edit button pre-fills amount/note/date/account from the row
+  and sends `money/update` with the entry id; a transfer reopens as a
+  transfer with its destination selected; and a transfer renders as two
+  rows reading "Transfer to long term" / "Transfer from short term".
+
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
   (connection refused — the automation host isn't this machine), and
@@ -634,6 +664,19 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
   Settings → Dashboards (this was gotten wrong once, from seeing the WS
   command plus a `require_admin` table column and inferring a UI that
   doesn't apply to us). Hence the `panel_admin_only` option.
+- **The live suites share one member and one to-do list, so run them with a
+  pause between.** Running the money suite immediately before the reward one
+  made four chore-progress checks fail; both pass alone, and both pass
+  back-to-back with ~10s between. Each suite ends by toggling a feature off,
+  which reloads the config entry, and the next suite can start mid-reload.
+  Suspect ordering before suspecting the code when a suite only fails in a
+  batch.
+- **Verify in-place patches to the test scripts actually applied.** Several
+  multi-line `str.replace()` edits to files under `%TEMP%` silently did
+  nothing — `replace` returns the string unchanged rather than raising, so
+  the script prints "patched" and the tests carry on running the old
+  assertions, looking like a pass. Either `assert OLD in text` before
+  replacing, or `grep` for the new content afterwards.
 - **`entry.runtime_data` is a `SkylightFamilyRuntime` dataclass, not a bare
   coordinator.** Adding the money coordinator meant every consumer had to
   move to `entry.runtime_data.rewards` / `.money` — and `binary_sensor.py`

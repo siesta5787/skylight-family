@@ -67,6 +67,11 @@ ACCOUNT_LABELS = {ACCOUNT_SHORT: "Short term", ACCOUNT_LONG: "Long term"}
 
 KIND_DEPOSIT = "deposit"
 KIND_EXPENSE = "expense"
+# A transfer is a single entry, not a paired expense+deposit: one id to edit
+# or delete, and no way to end up with half a transfer. `account` is the
+# source, `to_account` the destination, and replay applies it to both.
+KIND_TRANSFER = "transfer"
+ENTRY_KINDS = (KIND_DEPOSIT, KIND_EXPENSE, KIND_TRANSFER)
 # Interest is always derived by replaying the ledger, never stored — that's
 # what makes back-dating an entry correctly reshape the interest after it.
 KIND_INTEREST = "interest"
@@ -79,6 +84,7 @@ ATTR_ACCOUNT = "account"
 ATTR_AMOUNT = "amount"
 ATTR_KIND = "kind"
 ATTR_NOTE = "note"
+ATTR_TO_ACCOUNT = "to_account"
 
 # Entry options
 CONF_RESET_TIME = "reset_time"
@@ -114,7 +120,7 @@ PANEL_FILENAME = "skylight-panel.js"
 # Cache buster appended to the panel's module_url. Browsers cache ES modules
 # aggressively; bump this on every edit to frontend/skylight-panel.js or
 # users keep getting the old panel after an update.
-PANEL_JS_VERSION = "3"
+PANEL_JS_VERSION = "4"
 
 # Seeded once on first setup, as ordinary preset subentries — not treated
 # specially afterward, so editing/deleting them works the same as any

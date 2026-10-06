@@ -40,9 +40,10 @@ from .const import (
     CONF_MONEY_ENABLED,
     DEFAULT_INTEREST_RATE,
     DOMAIN,
-    KIND_DEPOSIT,
+    ENTRY_KINDS,
     KIND_EXPENSE,
     KIND_INTEREST,
+    KIND_TRANSFER,
     MONEY_STORAGE_KEY,
     MONEY_STORAGE_VERSION,
     WEEKS_PER_YEAR,
@@ -78,10 +79,29 @@ def _round_cents(value: Decimal) -> int:
     return int(value.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
-def signed_cents(entry: dict[str, Any]) -> int:
-    """Entries store a positive amount plus a kind; the sign comes from here."""
+def signed_cents(entry: dict[str, Any], account: str) -> int:
+    """How much this entry moves `account` by.
+
+    Entries store a positive amount plus a kind, so the sign lives here. A
+    transfer is one entry touching two accounts, so it reads as negative on
+    the account it leaves and positive on the one it lands in.
+    """
     amount = int(entry["amount_cents"])
-    return -amount if entry["kind"] == KIND_EXPENSE else amount
+    kind = entry["kind"]
+    if kind == KIND_EXPENSE:
+        return -amount
+    if kind == KIND_TRANSFER:
+        if entry["account"] == account:
+            return -amount
+        if entry.get("to_account") == account:
+            return amount
+        return 0
+    return amount
+
+
+def touches(entry: dict[str, Any], account: str) -> bool:
+    """Whether an entry belongs in `account`'s ledger at all."""
+    return entry["account"] == account or entry.get("to_account") == account
 
 
 def _sort_key(entry: dict[str, Any]) -> tuple[str, str]:
@@ -114,6 +134,42 @@ class MoneyStore:
     def entries(self, member_id: str) -> list[dict[str, Any]]:
         return sorted(self._data.get(member_id, []), key=_sort_key)
 
+    @staticmethod
+    def _validated(
+        account: str,
+        to_account: str | None,
+        kind: str,
+        amount_cents: int,
+        day: date,
+        note: str,
+    ) -> dict[str, Any]:
+        """Shared checks, so adding and editing can't drift apart."""
+        if account not in ACCOUNTS:
+            raise HomeAssistantError(f"Unknown account '{account}'")
+        if kind not in ENTRY_KINDS:
+            raise HomeAssistantError(f"Unknown entry type '{kind}'")
+        if amount_cents <= 0:
+            raise HomeAssistantError("Amount must be more than zero")
+        if day > dt_util.now().date():
+            raise HomeAssistantError(f"{day.isoformat()} hasn't happened yet")
+
+        fields: dict[str, Any] = {
+            "date": day.isoformat(),
+            "account": account,
+            "kind": kind,
+            "amount_cents": int(amount_cents),
+            "note": note.strip(),
+        }
+        if kind == KIND_TRANSFER:
+            if to_account not in ACCOUNTS:
+                raise HomeAssistantError("A transfer needs an account to move to")
+            if to_account == account:
+                raise HomeAssistantError(
+                    "A transfer has to move between two different accounts"
+                )
+            fields["to_account"] = to_account
+        return fields
+
     @callback
     def add(
         self,
@@ -123,27 +179,46 @@ class MoneyStore:
         amount_cents: int,
         day: date,
         note: str,
+        to_account: str | None = None,
     ) -> dict[str, Any]:
-        if account not in ACCOUNTS:
-            raise HomeAssistantError(f"Unknown account '{account}'")
-        if kind not in (KIND_DEPOSIT, KIND_EXPENSE):
-            raise HomeAssistantError(f"Unknown entry type '{kind}'")
-        if amount_cents <= 0:
-            raise HomeAssistantError("Amount must be more than zero")
-        if day > dt_util.now().date():
-            raise HomeAssistantError(f"{day.isoformat()} hasn't happened yet")
-
         entry = {
             "id": ulid_util.ulid_now(),
-            "date": day.isoformat(),
-            "account": account,
-            "kind": kind,
-            "amount_cents": int(amount_cents),
-            "note": note.strip(),
+            **self._validated(account, to_account, kind, amount_cents, day, note),
         }
         self._data.setdefault(member_id, []).append(entry)
         self.async_schedule_save()
         return entry
+
+    @callback
+    def update(
+        self,
+        member_id: str,
+        entry_id: str,
+        account: str,
+        kind: str,
+        amount_cents: int,
+        day: date,
+        note: str,
+        to_account: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace an entry's fields, keeping its id.
+
+        Every field is rewritten rather than merged, so editing a transfer
+        back into a plain deposit doesn't leave a stale `to_account` behind
+        for replay to trip over.
+        """
+        entries = self._data.get(member_id, [])
+        for index, existing in enumerate(entries):
+            if existing["id"] == entry_id:
+                entries[index] = {
+                    "id": entry_id,
+                    **self._validated(
+                        account, to_account, kind, amount_cents, day, note
+                    ),
+                }
+                self.async_schedule_save()
+                return entries[index]
+        raise HomeAssistantError("No such ledger entry")
 
     @callback
     def delete(self, member_id: str, entry_id: str) -> dict[str, Any]:
@@ -181,7 +256,7 @@ def replay(
     relevant = [
         entry
         for entry in entries
-        if entry["account"] == account and entry["date"] <= as_of.isoformat()
+        if touches(entry, account) and entry["date"] <= as_of.isoformat()
     ]
     earns_interest = account == ACCOUNT_LONG and rate > 0
 
@@ -210,8 +285,12 @@ def replay(
 
     while week <= current_week:
         for entry in by_week.get(week, []):
-            balance += signed_cents(entry)
-            rows.append({**entry, "balance_cents": balance})
+            balance += signed_cents(entry, account)
+            # `ledger_account` tells the UI which side of a transfer this row
+            # is, since the same entry appears in both accounts' ledgers.
+            rows.append(
+                {**entry, "ledger_account": account, "balance_cents": balance}
+            )
 
         # Close the week off: anything before the current one has had its
         # interest credited on the Monday that follows it.
@@ -319,6 +398,11 @@ class MoneyCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     async def async_add(self, **kwargs: Any) -> dict[str, Any]:
         entry = self.store.add(**kwargs)
+        await self.async_refresh()
+        return entry
+
+    async def async_update(self, **kwargs: Any) -> dict[str, Any]:
+        entry = self.store.update(**kwargs)
         await self.async_refresh()
         return entry
 
