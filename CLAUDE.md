@@ -159,6 +159,38 @@ it.
 - **`skylight_family.set_star`** service plus `skylight_family/rewards` and
   `skylight_family/rewards/set_star` WS commands (the latter takes an
   optional `week_start` so the panel can browse and edit history).
+- **Pocket-money ledger** (`money.py`), also off per member by default
+  (`money_enabled`, with a per-member `interest_rate`). Two accounts, short
+  and long term; the long one earns an annual rate credited **weekly, every
+  Monday** at `rate/52`, matching the Monday-first week the stars already
+  use. The design turns on two constraints the user asked for:
+  - **Back-dating has to back the interest out.** So interest is *never
+    stored* — `money.replay()` recomputes every balance and every interest
+    line from the entries a human actually typed, each time it's read.
+    Inserting a forgotten expense three weeks back automatically reduces all
+    the interest after it. Storing interest would mean reversing and
+    reissuing it, which is how ledgers quietly drift out of true. The
+    derived interest rows carry `id: null`, which is how the UI knows they
+    can't be deleted (fix the entries that caused them instead).
+  - **Money must add up**, so everything is integer cents through `Decimal`
+    with explicit `ROUND_HALF_UP`. Floats would accumulate error over years
+    of weekly compounding. Cents cross the WS API as integers too; the panel
+    is the only place that formats currency.
+  - Interest is skipped entirely on a zero or negative balance — kids don't
+    get charged interest for being overdrawn.
+  - The "accruing" figure is this part-week's interest (`balance × weekly
+    rate × days_elapsed/7`), shown but not credited, so the number moves
+    between Mondays instead of sitting still for a week.
+  - Unlike the star store, the money store is **never pruned** — a ledger
+    that forgets old entries would make today's balance wrong.
+- **Money entities**: `sensor.…_short_term` and `sensor.…_long_term` per
+  tracked member, device class `monetary`, in `hass.config.currency`. The
+  long-term one carries `interest_rate`, `interest_total`, `accruing` and
+  `last_interest_date` as attributes.
+- **`skylight_family.add_money`** service (amounts in currency units, since
+  humans and automations think that way — converted to cents on the way in;
+  handy for automating a weekly allowance) plus `skylight_family/money`,
+  `money/ledger`, `money/add` and `money/delete` WS commands.
 - No Lovelace cards and no custom theme — the sidebar panel is the only
   thing this integration renders in HA's frontend, and it's a standalone
   page, not a dashboard card. HA's built-in "To-do Lists" sidebar entry is
@@ -209,6 +241,11 @@ it.
 - The Rewards tab tracks the current week by holding `_rewardsWeek = null`
   rather than pinning today's Monday, so the panel left open overnight rolls
   over with the clock instead of getting stuck on yesterday's week.
+- **Money gaps**: no transfer between the two accounts (do it as an expense
+  plus a deposit), no editing an entry once written (delete and re-add), and
+  no interest on the short-term account by design. The ledger shows every
+  entry ever, with no paging — fine for a household, would want trimming if
+  it ran for years.
 - Reward tracking is per member and **off by default**, which means an
   existing install sees no new entities until it's switched on in the
   member's Settings form. That's deliberate (adults don't need stars), but
@@ -377,6 +414,39 @@ same WSL instance — 38 live checks plus a separate timing test, all passing:
   `module_url` came back as `…/skylight-panel.js?v=2`.
 - The three live backend suites (38 reward checks, panel API, admin toggle)
   all still pass unchanged.
+
+**2026-10-06 (later still)**, the money tracker — 31 live checks, 31 pure
+unit checks on the interest maths, and the panel suites grown accordingly:
+
+- **`money.replay()` unit-tested against hand-computed figures**
+  (`sk-interest.py`, no HA needed beyond the import): at 52%/yr — exactly
+  1% a week — $100 compounds 10000 → 10100 → 10201 → 10303 over three
+  completed weeks, interest lands on Mondays, the current week isn't
+  credited yet but accrues 6/7 of a week's worth by Sunday and zero on the
+  Monday itself. Also: short term never earns interest, a zero rate
+  produces no rows at all, zero and negative balances earn nothing, entries
+  after `as_of` are ignored, each row's running balance ends at the closing
+  balance, sub-cent interest never materialises, and exactly half a cent
+  rounds up.
+- **Back-dating, the whole point**: adding a $40 expense dated inside the
+  first week drops the three-week balance from 10303 to 6182 and the
+  interest from 303 to 182 — verified both as a unit test and live. Deleting
+  that entry again restores it to exactly 303.
+- **Live**: balances net out across deposits and expenses; the sensors
+  report currency units with `device_class: monetary`; the long-term sensor
+  carries rate/interest/accruing; the ledger returns interest rows with
+  `id: null` and real rows with ids, newest first, filterable by account;
+  future-dated entries, zero amounts and unknown entry ids are all refused
+  cleanly; the `add_money` service converts 1.25 to 125 cents; balance
+  entities disappear when money is switched off **and the ledger survives
+  being toggled off and back on**.
+- **Panel**: jsdom suite covers the balances block, the deposit/expense form
+  (cents conversion from "19.99", note trimming, today-capped date input,
+  blank-amount guard), the ledger drill-down, account filtering, the delete
+  confirm, and a money-only member still getting a card with no star grid.
+  The live-payload harness now also renders the real `money` and
+  `money/ledger` shapes and asserts the row count, the delete buttons and
+  the newest-first ordering match what the backend actually sent.
 
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
@@ -564,6 +634,13 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
   Settings → Dashboards (this was gotten wrong once, from seeing the WS
   command plus a `require_admin` table column and inferring a UI that
   doesn't apply to us). Hence the `panel_admin_only` option.
+- **`entry.runtime_data` is a `SkylightFamilyRuntime` dataclass, not a bare
+  coordinator.** Adding the money coordinator meant every consumer had to
+  move to `entry.runtime_data.rewards` / `.money` — and `binary_sensor.py`
+  got missed, so all three reward binary sensors failed to be added with a
+  bare `Error adding entity …` in the log while the star *sensor* kept
+  working. `grep -rn runtime_data custom_components/` after touching it; the
+  live reward suite caught this, the jsdom one never could.
 - **Don't tear the panel down on config-entry unload.** Every panel save
   updates a subentry → fires the entry's update listener → reloads the
   entry. If the panel were registered in `async_setup_entry` and removed in

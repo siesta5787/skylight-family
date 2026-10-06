@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
@@ -21,6 +25,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
 from .const import (
+    ACCOUNT_LABELS,
+    ACCOUNT_LONG,
+    ACCOUNT_SHORT,
     CONF_CALENDARS,
     CONF_COLOR,
     CONF_PERSON,
@@ -29,6 +36,7 @@ from .const import (
     WEEKDAY_PRESET_FIELDS,
     WEEKDAYS,
 )
+from .money import MoneyCoordinator, interest_rate, money_enabled
 from .rewards import RewardsCoordinator, rewards_enabled
 
 
@@ -37,14 +45,21 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: RewardsCoordinator = entry.runtime_data
+    runtime = entry.runtime_data
 
     for subentry in entry.subentries.values():
         if subentry.subentry_type != SUBENTRY_TYPE_MEMBER:
             continue
         entities: list[SensorEntity] = [SkylightFamilyMemberSensor(entry, subentry)]
         if rewards_enabled(subentry):
-            entities.append(SkylightFamilyStarsSensor(coordinator, entry, subentry))
+            entities.append(
+                SkylightFamilyStarsSensor(runtime.rewards, entry, subentry)
+            )
+        if money_enabled(subentry):
+            entities += [
+                SkylightFamilyBalanceSensor(runtime.money, entry, subentry, account)
+                for account in (ACCOUNT_SHORT, ACCOUNT_LONG)
+            ]
         async_add_entities(entities, config_subentry_id=subentry.subentry_id)
 
 
@@ -84,6 +99,7 @@ class SkylightFamilyMemberSensor(SensorEntity):
             "color": data.get(CONF_COLOR),
             "presets": presets,
             "rewards_enabled": rewards_enabled(self._subentry),
+            "money_enabled": money_enabled(self._subentry),
         }
 
 
@@ -148,4 +164,74 @@ class SkylightFamilyStarsSensor(
                 "chores_total",
                 "tablet_time",
             )
+        }
+
+
+class SkylightFamilyBalanceSensor(
+    CoordinatorEntity[MoneyCoordinator], SensorEntity
+):
+    """One account's balance, in whatever currency HA is configured for.
+
+    The long-term account carries the interest figures as attributes:
+    `interest_total` is what's been credited so far, `accruing` is this
+    part-week's worth that hasn't been credited yet — which is what makes the
+    number move between Mondays instead of sitting still for a week.
+    """
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+
+    def __init__(
+        self,
+        coordinator: MoneyCoordinator,
+        entry: ConfigEntry,
+        subentry: ConfigSubentry,
+        account: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._member_id = subentry.subentry_id
+        self._subentry = subentry
+        self._account = account
+        suffix = "short_term" if account == ACCOUNT_SHORT else "long_term"
+        name = subentry.data.get(CONF_NAME, subentry.title)
+        self._attr_unique_id = f"{entry.entry_id}_{subentry.subentry_id}_{suffix}"
+        self._attr_name = f"{name} {ACCOUNT_LABELS[account].lower()}"
+        self._attr_icon = (
+            "mdi:piggy-bank" if account == ACCOUNT_LONG else "mdi:wallet"
+        )
+        self.entity_id = f"sensor.skylight_family_{slugify(name)}_{suffix}"
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        return self.hass.config.currency
+
+    @property
+    def _state(self) -> dict[str, Any] | None:
+        member = (self.coordinator.data or {}).get(self._member_id)
+        return member.get(self._account) if member else None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._state is not None
+
+    @property
+    def native_value(self) -> float | None:
+        state = self._state
+        if state is None:
+            return None
+        return state["balance_cents"] / 100
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        state = self._state
+        if state is None:
+            return None
+        if self._account != ACCOUNT_LONG:
+            return {"account": self._account}
+        return {
+            "account": self._account,
+            "interest_rate": float(interest_rate(self._subentry) * 100),
+            "interest_total": state["interest_total_cents"] / 100,
+            "accruing": state["accruing_cents"] / 100,
+            "last_interest_date": state["last_interest_date"],
         }

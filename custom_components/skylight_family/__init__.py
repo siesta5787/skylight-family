@@ -15,6 +15,7 @@ for the same things via the config subentry flows.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import timedelta
 
 import voluptuous as vol
@@ -31,7 +32,12 @@ from homeassistant.util import dt as dt_util
 
 from . import panel, websocket_api
 from .const import (
+    ACCOUNTS,
+    ATTR_ACCOUNT,
+    ATTR_AMOUNT,
     ATTR_DATE,
+    ATTR_KIND,
+    ATTR_NOTE,
     ATTR_PRESET,
     ATTR_STAR,
     BUILTIN_PRESETS,
@@ -42,9 +48,13 @@ from .const import (
     DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
     DOMAIN,
+    MONEY_ENTITY_SUFFIXES,
     REWARD_ENTITY_SUFFIXES,
+    SERVICE_ADD_MONEY,
     SERVICE_APPLY_PRESET,
     SERVICE_SET_STAR,
+    KIND_DEPOSIT,
+    KIND_EXPENSE,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
     WEEKDAY_PRESET_FIELDS,
@@ -58,6 +68,7 @@ from .helpers import (
     members,
     presets,
 )
+from .money import MoneyCoordinator, money_enabled
 from .rewards import RewardsCoordinator, rewards_enabled
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,6 +88,18 @@ SET_STAR_SCHEMA = vol.Schema(
         # Omit `star` entirely to hand the day back to automatic evaluation.
         vol.Optional(ATTR_STAR): cv.boolean,
         vol.Optional(ATTR_DATE): cv.date,
+    }
+)
+
+ADD_MONEY_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        vol.Required(ATTR_ACCOUNT): vol.In(ACCOUNTS),
+        vol.Required(ATTR_KIND): vol.In((KIND_DEPOSIT, KIND_EXPENSE)),
+        # In currency units, e.g. 2.50 — converted to cents on the way in.
+        vol.Required(ATTR_AMOUNT): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+        vol.Optional(ATTR_DATE): cv.date,
+        vol.Optional(ATTR_NOTE, default=""): cv.string,
     }
 )
 
@@ -111,7 +134,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if entry is None:
             raise HomeAssistantError("Skylight Family is not configured")
 
-        coordinator: RewardsCoordinator = entry.runtime_data
+        coordinator = entry.runtime_data.rewards
         day = call.data.get(ATTR_DATE) or dt_util.now().date()
         star = call.data.get(ATTR_STAR)
 
@@ -124,11 +147,38 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 member_subentry.subentry_id, day, star
             )
 
+    async def _handle_add_money(call: ServiceCall) -> None:
+        entry = get_entry(hass)
+        if entry is None:
+            raise HomeAssistantError("Skylight Family is not configured")
+
+        coordinator = entry.runtime_data.money
+        day = call.data.get(ATTR_DATE) or dt_util.now().date()
+        # Service callers think in currency units; the ledger thinks in cents.
+        amount_cents = int(round(float(call.data[ATTR_AMOUNT]) * 100))
+
+        for member_subentry in _resolve_members(hass, entry, call):
+            if not money_enabled(member_subentry):
+                raise HomeAssistantError(
+                    f"Money tracking is turned off for {member_subentry.title}"
+                )
+            await coordinator.async_add(
+                member_id=member_subentry.subentry_id,
+                account=call.data[ATTR_ACCOUNT],
+                kind=call.data[ATTR_KIND],
+                amount_cents=amount_cents,
+                day=day,
+                note=call.data.get(ATTR_NOTE, ""),
+            )
+
     hass.services.async_register(
         DOMAIN, SERVICE_APPLY_PRESET, _handle_apply_preset, schema=APPLY_PRESET_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_STAR, _handle_set_star, schema=SET_STAR_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ADD_MONEY, _handle_add_money, schema=ADD_MONEY_SCHEMA
     )
     websocket_api.async_register(hass)
     return True
@@ -163,17 +213,29 @@ def _resolve_members(
     return resolved
 
 
-type SkylightFamilyEntry = ConfigEntry[RewardsCoordinator]
+@dataclass
+class SkylightFamilyRuntime:
+    """What `entry.runtime_data` holds: one coordinator per feature."""
+
+    rewards: RewardsCoordinator
+    money: MoneyCoordinator
+
+
+type SkylightFamilyEntry = ConfigEntry[SkylightFamilyRuntime]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SkylightFamilyEntry) -> bool:
     _seed_builtin_presets(hass, entry)
-    _remove_stale_reward_entities(hass, entry)
+    _remove_stale_feature_entities(hass, entry)
 
-    coordinator = RewardsCoordinator(hass, entry)
-    await coordinator.async_prepare()
-    await coordinator.async_config_entry_first_refresh()
-    entry.runtime_data = coordinator
+    rewards = RewardsCoordinator(hass, entry)
+    await rewards.async_prepare()
+    money = MoneyCoordinator(hass, entry)
+    await money.async_prepare()
+
+    entry.runtime_data = SkylightFamilyRuntime(rewards=rewards, money=money)
+    await rewards.async_config_entry_first_refresh()
+    await money.async_config_entry_first_refresh()
 
     await panel.async_register(
         hass,
@@ -222,8 +284,8 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _remove_stale_reward_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete a member's star entities once reward tracking is turned off.
+def _remove_stale_feature_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete a member's star or money entities once that feature is off.
 
     Platforms simply stop creating them, which leaves the registry entries
     behind as permanently `unavailable` entities cluttering the member's
@@ -235,18 +297,23 @@ def _remove_stale_reward_entities(hass: HomeAssistant, entry: ConfigEntry) -> No
     """
     ent_reg = er.async_get(hass)
     for subentry in members(entry):
-        if rewards_enabled(subentry):
+        stale_suffixes: list[str] = []
+        if not rewards_enabled(subentry):
+            stale_suffixes += REWARD_ENTITY_SUFFIXES
+        if not money_enabled(subentry):
+            stale_suffixes += MONEY_ENTITY_SUFFIXES
+        if not stale_suffixes:
             continue
         stale_ids = {
             f"{entry.entry_id}_{subentry.subentry_id}_{suffix}"
-            for suffix in REWARD_ENTITY_SUFFIXES
+            for suffix in stale_suffixes
         }
         for registry_entry in er.async_entries_for_config_entry(
             ent_reg, entry.entry_id
         ):
             if registry_entry.unique_id in stale_ids:
                 _LOGGER.debug(
-                    "Removing %s, reward tracking is off for %s",
+                    "Removing %s, that feature is off for %s",
                     registry_entry.entity_id,
                     subentry.title,
                 )
@@ -282,7 +349,7 @@ async def _apply_daily_reset(hass: HomeAssistant, entry: ConfigEntry) -> None:
     whether yesterday's chores were done, so the star has to be recorded
     first. See `rewards.py`.
     """
-    coordinator: RewardsCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data.rewards
     yesterday = dt_util.now().date() - timedelta(days=1)
     _LOGGER.debug("Daily reset: freezing stars for %s", yesterday)
     await coordinator.async_freeze_day(yesterday)

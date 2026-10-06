@@ -49,6 +49,37 @@ SOURCE_MANUAL = "manual"
 # on, so they can be cleaned out of the registry when it's turned off.
 REWARD_ENTITY_SUFFIXES = ("stars", "star_today", "tablet_time", "weekly_prize")
 
+# Pocket-money tracking, per member. Like rewards, off by default.
+CONF_MONEY_ENABLED = "money_enabled"
+# Annual percentage, divided by 52 and credited every Monday. Stored as a
+# plain number (3.0 means 3%); only the long-term account earns it.
+CONF_INTEREST_RATE = "interest_rate"
+DEFAULT_INTEREST_RATE = 0.0
+WEEKS_PER_YEAR = 52
+
+MONEY_STORAGE_KEY = f"{DOMAIN}.money"
+MONEY_STORAGE_VERSION = 1
+
+ACCOUNT_SHORT = "short"
+ACCOUNT_LONG = "long"
+ACCOUNTS = (ACCOUNT_SHORT, ACCOUNT_LONG)
+ACCOUNT_LABELS = {ACCOUNT_SHORT: "Short term", ACCOUNT_LONG: "Long term"}
+
+KIND_DEPOSIT = "deposit"
+KIND_EXPENSE = "expense"
+# Interest is always derived by replaying the ledger, never stored — that's
+# what makes back-dating an entry correctly reshape the interest after it.
+KIND_INTEREST = "interest"
+
+MONEY_ENTITY_SUFFIXES = ("short_term", "long_term")
+
+# Service: skylight_family.add_money
+SERVICE_ADD_MONEY = "add_money"
+ATTR_ACCOUNT = "account"
+ATTR_AMOUNT = "amount"
+ATTR_KIND = "kind"
+ATTR_NOTE = "note"
+
 # Entry options
 CONF_RESET_TIME = "reset_time"
 DEFAULT_RESET_TIME = "04:00:00"
@@ -83,7 +114,7 @@ PANEL_FILENAME = "skylight-panel.js"
 # Cache buster appended to the panel's module_url. Browsers cache ES modules
 # aggressively; bump this on every edit to frontend/skylight-panel.js or
 # users keep getting the old panel after an update.
-PANEL_JS_VERSION = "2"
+PANEL_JS_VERSION = "3"
 
 # Seeded once on first setup, as ordinary preset subentries — not treated
 # specially afterward, so editing/deleting them works the same as any

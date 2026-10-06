@@ -26,6 +26,8 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_CALENDARS,
     CONF_COLOR,
+    CONF_INTEREST_RATE,
+    CONF_MONEY_ENABLED,
     CONF_PANEL_ADMIN_ONLY,
     CONF_PERSON,
     CONF_PRESET_ITEMS,
@@ -33,6 +35,7 @@ from .const import (
     CONF_REWARDS_ENABLED,
     CONF_STAR_GOAL,
     CONF_TODO,
+    DEFAULT_INTEREST_RATE,
     DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
     DEFAULT_STAR_GOAL,
@@ -151,8 +154,12 @@ def _weekday_preset_fields(
 
 
 def _reward_fields(current: dict[str, Any] | None = None) -> dict[Any, Any]:
-    """Per-member reward tracking: off by default, so adults don't get star
-    entities they'll never look at."""
+    """Per-member reward and money tracking, both off by default so adults
+    don't get star or balance entities they'll never look at.
+
+    The interest rate is an annual percentage, charged weekly at rate/52 on
+    the long-term account only.
+    """
     return {
         vol.Required(
             CONF_REWARDS_ENABLED,
@@ -164,6 +171,24 @@ def _reward_fields(current: dict[str, Any] | None = None) -> dict[Any, Any]:
         ): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=1, max=7, step=1, mode=selector.NumberSelectorMode.SLIDER
+            )
+        ),
+        vol.Required(
+            CONF_MONEY_ENABLED,
+            default=bool((current or {}).get(CONF_MONEY_ENABLED, False)),
+        ): selector.BooleanSelector(),
+        vol.Required(
+            CONF_INTEREST_RATE,
+            default=float(
+                (current or {}).get(CONF_INTEREST_RATE, DEFAULT_INTEREST_RATE)
+            ),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0,
+                max=100,
+                step=0.1,
+                unit_of_measurement="%",
+                mode=selector.NumberSelectorMode.BOX,
             )
         ),
     }

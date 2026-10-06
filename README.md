@@ -30,8 +30,9 @@ what*, Skylight HA owns the *display*.
     to-do list, calendars and colour belong to them.
   - **Presets** — view, add, edit and delete presets, and apply one to a
     member from that side too.
-  - **Rewards** — each tracked kid's week of stars, tappable to award or
-    take one back, with a pager for earlier weeks.
+  - **Rewards / Money** — each tracked kid's week of stars, tappable to
+    award or take one back with a pager for earlier weeks, and underneath,
+    their balances with deposit/expense buttons and a ledger.
 
   It's a view of the same data as Settings → Devices & Services, not a
   parallel store, so you can use either. Adding and removing *members*
@@ -55,6 +56,20 @@ what*, Skylight HA owns the *display*.
     seven tappable star cells, a week pager for browsing and fixing up past
     weeks, and today's chore progress, tablet-time status and prize
     shortfall underneath.
+- **Pocket money** — opt in per member, with a short-term and a long-term
+  account. Deposit, log expenses, and the long-term account earns interest
+  at a yearly rate you set per kid, credited every Monday.
+  - **Back-date anything.** Forgot to log an expense last week? Enter it at
+    the date it happened and the interest earned since is recalculated —
+    interest is always derived from the ledger rather than stored, so it
+    can't drift.
+  - The card shows both balances, interest earned so far, and a live
+    *accruing* figure for the part-week that hasn't been credited yet. Tap
+    it for the full ledger, where interest shows up as its own entries.
+  - Per tracked member you get `sensor.…_short_term` and
+    `sensor.…_long_term` (device class monetary, in your HA currency), plus
+    a `skylight_family.add_money` service — handy for automating a weekly
+    allowance.
 - **A `sensor.skylight_family_<name>` per member** — the only new state
   this integration creates, carrying the mapping (`person_entity_id`,
   `calendar_entity_ids`,

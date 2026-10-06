@@ -25,3 +25,48 @@ set_star:
       example: "2026-10-05"
       selector:
         date:
+
+add_money:
+  target:
+    entity:
+      integration: skylight_family
+  fields:
+    account:
+      required: true
+      selector:
+        select:
+          options:
+            - label: Short term
+              value: short
+            - label: Long term
+              value: long
+    kind:
+      required: true
+      selector:
+        select:
+          options:
+            - label: Deposit
+              value: deposit
+            - label: Expense
+              value: expense
+    amount:
+      required: true
+      example: 2.50
+      selector:
+        number:
+          min: 0.01
+          max: 100000
+          step: 0.01
+          mode: box
+    date:
+      # Any date up to today, so a forgotten expense goes in where it
+      # belongs and the interest after it is recalculated.
+      required: false
+      example: "2026-10-06"
+      selector:
+        date:
+    note:
+      required: false
+      example: "Allowance"
+      selector:
+        text:

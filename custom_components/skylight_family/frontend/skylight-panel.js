@@ -322,6 +322,90 @@ const STYLES = `
   .badge.prize { background: rgba(246, 183, 60, 0.25); color: #8a5a00; }
   .score { font-size: 18px; font-weight: 500; white-space: nowrap; }
   .score .of { color: var(--secondary-text-color, #727272); font-size: 14px; }
+
+  .balances {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    cursor: pointer;
+    border-radius: 10px;
+  }
+  .balances:hover { background: rgba(0, 0, 0, 0.03); }
+  .balance {
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: var(--card-background-color, #fff);
+  }
+  .balance .bl {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--secondary-text-color, #727272);
+  }
+  .balance .bv {
+    display: block;
+    font-size: 24px;
+    font-weight: 500;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .balance .bsub {
+    display: block;
+    font-size: 11px;
+    margin-top: 3px;
+    color: #2e7d32;
+  }
+  .money-form {
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 10px;
+    padding: 4px 14px 14px;
+    margin-top: 12px;
+  }
+  input[type="number"], input[type="date"] {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 10px;
+    color: var(--primary-text-color, #212121);
+    background: var(--card-background-color, #fff);
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 6px;
+  }
+  table.ledger { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.ledger td {
+    padding: 9px 6px;
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    vertical-align: top;
+  }
+  table.ledger tr:last-child td { border-bottom: 0; }
+  table.ledger tr.derived td { color: var(--secondary-text-color, #727272); }
+  table.ledger .when { white-space: nowrap; color: var(--secondary-text-color, #727272); }
+  table.ledger .what { width: 100%; word-break: break-word; }
+  table.ledger .amount,
+  table.ledger .running {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  table.ledger .amount.in { color: #2e7d32; }
+  table.ledger .amount.out { color: var(--error-color, #db4437); }
+  table.ledger .running { color: var(--secondary-text-color, #727272); }
+  table.ledger .del { text-align: right; }
+  table.ledger .del button.action { padding: 2px 8px; border: 0; }
+  .chip {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--divider-color, #e0e0e0);
+    color: var(--secondary-text-color, #727272);
+  }
 `;
 
 const MENU_ICON =
@@ -345,6 +429,14 @@ class SkylightFamilyPanel extends HTMLElement {
     // the current week, so it keeps following the clock).
     this._rewards = null;
     this._rewardsWeek = null;
+    // Money lives on the same tab. The ledger is a drill-down within it:
+    // _ledgerMember set means we're showing one kid's ledger instead of the
+    // card list.
+    this._money = null;
+    this._ledgerMember = null;
+    this._ledgerAccount = null;
+    this._ledger = null;
+    this._moneyForm = null;
   }
 
   set hass(hass) {
@@ -379,22 +471,96 @@ class SkylightFamilyPanel extends HTMLElement {
       this._loadError = this._errorText(err);
     }
     if (this._tab === "rewards" && this._data && this._data.configured) {
-      await this._loadRewards();
+      await this._loadTab();
       return;
     }
     this._render();
   }
 
-  async _loadRewards() {
-    const message = { type: "skylight_family/rewards" };
-    if (this._rewardsWeek) message.week_start = this._rewardsWeek;
+  async _fetch(key, message) {
     try {
-      this._rewards = await this._hass.callWS(message);
+      this[key] = await this._hass.callWS(message);
       this._loadError = null;
     } catch (err) {
       this._loadError = this._errorText(err);
     }
+  }
+
+  _rewardsMessage() {
+    const message = { type: "skylight_family/rewards" };
+    if (this._rewardsWeek) message.week_start = this._rewardsWeek;
+    return message;
+  }
+
+  async _loadRewards() {
+    await this._fetch("_rewards", this._rewardsMessage());
     this._render();
+  }
+
+  async _loadMoney() {
+    await this._fetch("_money", { type: "skylight_family/money" });
+    this._render();
+  }
+
+  /** Both halves of the tab, in parallel, rendering once. */
+  async _loadTab() {
+    await Promise.all([
+      this._fetch("_rewards", this._rewardsMessage()),
+      this._fetch("_money", { type: "skylight_family/money" }),
+    ]);
+    this._render();
+  }
+
+  async _loadLedger() {
+    if (!this._ledgerMember) return;
+    const message = {
+      type: "skylight_family/money/ledger",
+      subentry_id: this._ledgerMember,
+    };
+    if (this._ledgerAccount) message.account = this._ledgerAccount;
+    await this._fetch("_ledger", message);
+    this._render();
+  }
+
+  /** After a deposit/expense/delete: balances always, ledger if it's open. */
+  async _afterMoneyChange() {
+    await this._fetch("_money", { type: "skylight_family/money" });
+    if (this._ledgerMember) {
+      const message = {
+        type: "skylight_family/money/ledger",
+        subentry_id: this._ledgerMember,
+      };
+      if (this._ledgerAccount) message.account = this._ledgerAccount;
+      await this._fetch("_ledger", message);
+    }
+    this._render();
+  }
+
+  /** Cents to a currency string, using whatever currency HA is set to. */
+  _fmt(cents) {
+    const currency =
+      (this._money && this._money.currency) ||
+      (this._ledger && this._ledger.currency);
+    const value = (cents || 0) / 100;
+    if (currency) {
+      try {
+        return new Intl.NumberFormat(undefined, {
+          style: "currency",
+          currency,
+        }).format(value);
+      } catch (err) {
+        // Unknown currency code — fall through to a plain number.
+      }
+    }
+    return value.toFixed(2);
+  }
+
+  _fmtDate(iso) {
+    return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
   }
 
   _errorText(err) {
@@ -481,7 +647,7 @@ class SkylightFamilyPanel extends HTMLElement {
         <button class="tab" role="tab" data-action="tab" data-tab="presets"
           aria-selected="${this._tab === "presets"}">Presets</button>
         <button class="tab" role="tab" data-action="tab" data-tab="rewards"
-          aria-selected="${this._tab === "rewards"}">Rewards</button>
+          aria-selected="${this._tab === "rewards"}">Rewards / Money</button>
       </div>
       ${body}
     `;
@@ -705,36 +871,225 @@ class SkylightFamilyPanel extends HTMLElement {
   /* ------------------------------------------------------------- rewards */
 
   _renderRewards() {
-    if (!this._rewards) {
+    if (!this._rewards || !this._money) {
       return `<div class="content"><p class="empty">Loading…</p></div>`;
     }
+    if (this._ledgerMember) return this._renderLedger();
 
-    const { members, weekdays, today, this_week_start: thisWeek } = this._rewards;
-    if (!members.length) {
+    const { weekdays, today, this_week_start: thisWeek } = this._rewards;
+    const starred = this._rewards.members || [];
+    const funded = this._money.members || [];
+
+    // A kid can have stars, money, or both — merge rather than letting one
+    // feature decide who appears.
+    const order = [];
+    const byId = new Map();
+    for (const member of [...starred, ...funded]) {
+      if (!byId.has(member.subentry_id)) {
+        byId.set(member.subentry_id, { name: member.name, color: member.color });
+        order.push(member.subentry_id);
+      }
+    }
+    for (const member of starred) byId.get(member.subentry_id).stars = member;
+    for (const member of funded) byId.get(member.subentry_id).money = member;
+    order.sort((a, b) => byId.get(a).name.localeCompare(byId.get(b).name));
+
+    if (!order.length) {
       return `<div class="content"><div class="card"><h2>Nobody's being tracked yet</h2>
-        <p class="sub">Turn on <em>Track stars and rewards</em> for a family member in
-        Settings &rarr; Devices &amp; services &rarr; Skylight Family &rarr; (member)
-        &rarr; Edit, and they'll show up here.</p></div></div>`;
+        <p class="sub">Turn on <em>Track stars and rewards</em> or <em>Track pocket
+        money</em> for a family member in Settings &rarr; Devices &amp; services
+        &rarr; Skylight Family &rarr; (member) &rarr; Edit, and they'll show up
+        here.</p></div></div>`;
     }
 
-    const viewing = members[0].week_start;
+    const viewing = starred.length ? starred[0].week_start : thisWeek;
     const isThisWeek = viewing === thisWeek;
 
     return `<div class="content">
-      <div class="week-nav">
-        <button class="action" data-action="week" data-delta="-1">&larr; Earlier</button>
-        <span class="label">${esc(this._weekLabel(viewing, isThisWeek))}</span>
-        <button class="action" data-action="week" data-delta="1"
-          ${isThisWeek ? "disabled" : ""}>Later &rarr;</button>
-        ${isThisWeek ? "" : '<button class="action" data-action="week-now">This week</button>'}
-      </div>
-      <p class="intro">Tap a day to award or take back a star by hand. Days decided by
-      the chore list are marked <em>auto</em>; your own changes stick as <em>manual</em>
-      until you reset them.</p>
-      ${members
-        .map((member) => this._renderRewardCard(member, weekdays, today, isThisWeek))
+      ${
+        starred.length
+          ? `<div class="week-nav">
+              <button class="action" data-action="week" data-delta="-1">&larr; Earlier</button>
+              <span class="label">${esc(this._weekLabel(viewing, isThisWeek))}</span>
+              <button class="action" data-action="week" data-delta="1"
+                ${isThisWeek ? "disabled" : ""}>Later &rarr;</button>
+              ${isThisWeek ? "" : '<button class="action" data-action="week-now">This week</button>'}
+            </div>`
+          : ""
+      }
+      ${order
+        .map((id) => {
+          const member = byId.get(id);
+          return `<div class="card">
+            <div class="card-head">
+              <span class="dot" style="background:${esc(rgbToHex(member.color))}"></span>
+              <h2>${esc(member.name)}</h2>
+              ${
+                member.stars
+                  ? `<span class="score">${member.stars.stars}<span class="of"> / ${member.stars.goal} ★</span></span>`
+                  : ""
+              }
+            </div>
+            ${member.stars ? this._renderStarWeek(member.stars, weekdays, today, isThisWeek) : ""}
+            ${member.money ? this._renderMoney(member.money) : ""}
+          </div>`;
+        })
         .join("")}
     </div>`;
+  }
+
+  _renderMoney(money) {
+    const id = money.subentry_id;
+    const short = money.accounts.short || {};
+    const long = money.accounts.long || {};
+    const accruing = long.accruing_cents || 0;
+
+    return `<div class="section-label">Money</div>
+      <div class="balances" data-action="ledger" data-member="${esc(id)}"
+        title="Open the ledger">
+        <div class="balance">
+          <span class="bl">Short term</span>
+          <span class="bv">${esc(this._fmt(short.balance_cents))}</span>
+        </div>
+        <div class="balance">
+          <span class="bl">Long term</span>
+          <span class="bv">${esc(this._fmt(long.balance_cents))}</span>
+          ${
+            money.interest_rate
+              ? `<span class="bsub">${
+                  accruing ? `+${esc(this._fmt(accruing))} accruing · ` : ""
+                }${esc(String(money.interest_rate))}% a year</span>`
+              : '<span class="bsub">no interest set</span>'
+          }
+        </div>
+      </div>
+      ${
+        long.interest_total_cents
+          ? `<p class="sub">Interest earned so far: <strong>${esc(
+              this._fmt(long.interest_total_cents),
+            )}</strong></p>`
+          : ""
+      }
+      ${this._moneyForm && this._moneyForm.member === id ? this._renderMoneyForm(id) : ""}
+      <div class="row">
+        <button class="action" data-action="money-form" data-member="${esc(id)}"
+          data-kind="deposit" ${this._busy ? "disabled" : ""}>Deposit</button>
+        <button class="action" data-action="money-form" data-member="${esc(id)}"
+          data-kind="expense" ${this._busy ? "disabled" : ""}>Expense</button>
+        <span class="spacer"></span>
+        <button class="action" data-action="ledger" data-member="${esc(id)}">Ledger &rarr;</button>
+      </div>`;
+  }
+
+  _renderMoneyForm(memberId) {
+    const { kind } = this._moneyForm;
+    const today = (this._money && this._money.today) || "";
+    return `<div data-money-form="${esc(memberId)}" class="money-form">
+      <div class="field">
+        <label>Account</label>
+        <select data-field="account">
+          <option value="short">Short term</option>
+          <option value="long">Long term</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Amount</label>
+        <input type="number" inputmode="decimal" step="0.01" min="0.01"
+          placeholder="0.00" data-field="amount">
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" data-field="date" value="${esc(today)}" max="${esc(today)}">
+      </div>
+      <div class="field">
+        <label>Note</label>
+        <input type="text" data-field="note"
+          placeholder="${kind === "deposit" ? "Allowance" : "Comic book"}">
+      </div>
+      <div class="row">
+        <button class="action primary" data-action="money-save" data-member="${esc(memberId)}"
+          data-kind="${esc(kind)}" ${this._busy ? "disabled" : ""}>
+          Save ${kind === "deposit" ? "deposit" : "expense"}</button>
+        <button class="action" data-action="money-cancel">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  _renderLedger() {
+    if (!this._ledger) {
+      return `<div class="content"><p class="empty">Loading…</p></div>`;
+    }
+    const { rows, name, interest_rate: rate } = this._ledger;
+    const id = this._ledgerMember;
+    const showAccount = !this._ledgerAccount;
+
+    const tabs = [
+      { value: null, label: "All" },
+      { value: "short", label: "Short term" },
+      { value: "long", label: "Long term" },
+    ]
+      .map(
+        (option) =>
+          `<button class="action ${
+            (this._ledgerAccount || null) === option.value ? "primary" : ""
+          }" data-action="ledger-account" data-account="${esc(option.value || "")}"
+          >${esc(option.label)}</button>`,
+      )
+      .join("");
+
+    return `<div class="content">
+      <div class="week-nav">
+        <button class="action" data-action="ledger-close">&larr; Back</button>
+        <span class="label">${esc(name)}'s money</span>
+      </div>
+      <div class="week-nav">${tabs}</div>
+      ${this._moneyForm && this._moneyForm.member === id ? this._renderMoneyForm(id) : ""}
+      <div class="row" style="margin-top:0">
+        <button class="action" data-action="money-form" data-member="${esc(id)}"
+          data-kind="deposit" ${this._busy ? "disabled" : ""}>Deposit</button>
+        <button class="action" data-action="money-form" data-member="${esc(id)}"
+          data-kind="expense" ${this._busy ? "disabled" : ""}>Expense</button>
+      </div>
+      <div class="card">
+        ${
+          rows.length
+            ? `<table class="ledger">
+                <tbody>${rows
+                  .map((row) => this._renderLedgerRow(row, id, showAccount, rate))
+                  .join("")}</tbody>
+              </table>`
+            : '<p class="empty">Nothing recorded yet.</p>'
+        }
+      </div>
+    </div>`;
+  }
+
+  _renderLedgerRow(row, memberId, showAccount, rate) {
+    const interest = row.kind === "interest";
+    const signed = row.kind === "expense" ? -row.amount_cents : row.amount_cents;
+    const label = interest
+      ? `Interest${rate ? ` (${rate}% ÷ 52)` : ""}`
+      : row.note || (row.kind === "deposit" ? "Deposit" : "Expense");
+
+    return `<tr class="${interest ? "derived" : ""}">
+      <td class="when">${esc(this._fmtDate(row.date))}</td>
+      <td class="what">${esc(label)}${
+        showAccount
+          ? `<span class="chip">${row.account === "long" ? "long" : "short"}</span>`
+          : ""
+      }</td>
+      <td class="amount ${signed < 0 ? "out" : "in"}">${
+        signed < 0 ? "−" : "+"
+      }${esc(this._fmt(Math.abs(signed)))}</td>
+      <td class="running">${esc(this._fmt(row.balance_cents))}</td>
+      <td class="del">${
+        row.id
+          ? `<button class="action danger" data-action="money-delete"
+               data-member="${esc(memberId)}" data-entry="${esc(row.id)}"
+               title="Delete this entry" ${this._busy ? "disabled" : ""}>✕</button>`
+          : ""
+      }</td>
+    </tr>`;
   }
 
   _weekLabel(weekStart, isThisWeek) {
@@ -745,7 +1100,9 @@ class SkylightFamilyPanel extends HTMLElement {
     return `${isThisWeek ? "This week" : "Week"}: ${fmt(start)} – ${fmt(end)}`;
   }
 
-  _renderRewardCard(member, weekdays, today, isThisWeek) {
+  /** The star week plus today's facts. The card and header around it are
+   * built by _renderRewards, since a member may also have a money block. */
+  _renderStarWeek(member, weekdays, today, isThisWeek) {
     const id = member.subentry_id;
     const dates = Object.keys(member.days).sort();
 
@@ -756,11 +1113,7 @@ class SkylightFamilyPanel extends HTMLElement {
         const earned = !!(record && record.star);
         const manual = !!(record && record.source === "manual");
         const glyph = future ? "·" : earned ? "★" : "☆";
-        const classes = [
-          "star",
-          earned ? "earned" : "",
-          dateIso === today ? "today" : "",
-        ]
+        const classes = ["star", earned ? "earned" : "", dateIso === today ? "today" : ""]
           .filter(Boolean)
           .join(" ");
         const label = (weekdays[index] || { label: dateIso }).label;
@@ -810,15 +1163,7 @@ class SkylightFamilyPanel extends HTMLElement {
             : `${member.stars} of ${member.goal} stars that week`
         }</div></div>`;
 
-    return `<div class="card">
-      <div class="card-head">
-        <span class="dot" style="background:${esc(rgbToHex(member.color))}"></span>
-        <h2>${esc(member.name)}</h2>
-        <span class="score">${member.stars}<span class="of"> / ${member.goal} ★</span></span>
-      </div>
-      <div class="week">${cells}</div>
-      ${facts}
-    </div>`;
+    return `<div class="week" data-week-for="${esc(id)}">${cells}</div>${facts}`;
   }
 
   _shiftWeek(weekStart, delta) {
@@ -828,6 +1173,58 @@ class SkylightFamilyPanel extends HTMLElement {
     // local midnight to UTC and land on the previous day east of Greenwich.
     const pad = (value) => String(value).padStart(2, "0");
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  _saveMoney(memberId, kind) {
+    const form = this._shadow.querySelector(`[data-money-form="${memberId}"]`);
+    if (!form) return;
+    const value = (field) => form.querySelector(`[data-field="${field}"]`).value;
+
+    // Parse to cents rather than keeping a float around: 19.99 * 100 is
+    // 1998.9999... in binary, so the rounding has to happen here, once.
+    const amount = Number.parseFloat(value("amount"));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      this._notify("Skylight: enter an amount greater than zero");
+      return;
+    }
+    const date = value("date");
+    if (!date) {
+      this._notify("Skylight: pick a date");
+      return;
+    }
+
+    this._moneyForm = null;
+    this._call(
+      {
+        type: "skylight_family/money/add",
+        subentry_id: memberId,
+        account: value("account"),
+        kind,
+        amount_cents: Math.round(amount * 100),
+        date,
+        note: value("note").trim(),
+      },
+      (result) =>
+        `${result.kind === "deposit" ? "Deposited" : "Recorded"} ${this._fmt(
+          result.amount_cents,
+        )}`,
+      this._afterMoneyChange,
+    );
+  }
+
+  _deleteMoney(memberId, entryId) {
+    if (!confirm("Delete this entry? Any interest earned after it is recalculated.")) {
+      return;
+    }
+    this._call(
+      {
+        type: "skylight_family/money/delete",
+        subentry_id: memberId,
+        entry_id: entryId,
+      },
+      () => "Entry deleted",
+      this._afterMoneyChange,
+    );
   }
 
   _setStar(memberId, dateIso, star) {
@@ -888,13 +1285,17 @@ class SkylightFamilyPanel extends HTMLElement {
       this._tab = target.dataset.tab;
       this._editingMember = null;
       this._editingPreset = null;
+      this._ledgerMember = null;
+      this._ledger = null;
+      this._moneyForm = null;
       this._render();
-      if (this._tab === "rewards") this._loadRewards();
+      if (this._tab === "rewards") this._loadTab();
       return;
     }
     if (action === "reload") {
-      if (this._tab === "rewards") this._loadRewards();
-      else this._load();
+      if (this._tab !== "rewards") this._load();
+      else if (this._ledgerMember) this._loadLedger();
+      else this._loadTab();
       return;
     }
     if (action === "week") {
@@ -927,6 +1328,47 @@ class SkylightFamilyPanel extends HTMLElement {
     if (action === "star-auto") {
       this._setStar(target.dataset.member, target.dataset.date, null);
       return;
+    }
+    if (action === "ledger") {
+      this._ledgerMember = target.dataset.member;
+      this._ledgerAccount = null;
+      this._ledger = null;
+      this._moneyForm = null;
+      this._render();
+      this._loadLedger();
+      return;
+    }
+    if (action === "ledger-close") {
+      this._ledgerMember = null;
+      this._ledger = null;
+      this._moneyForm = null;
+      this._render();
+      return;
+    }
+    if (action === "ledger-account") {
+      this._ledgerAccount = target.dataset.account || null;
+      this._loadLedger();
+      return;
+    }
+    if (action === "money-form") {
+      const { member, kind } = target.dataset;
+      const open = this._moneyForm;
+      this._moneyForm =
+        open && open.member === member && open.kind === kind ? null : { member, kind };
+      this._render();
+      return;
+    }
+    if (action === "money-cancel") {
+      this._moneyForm = null;
+      this._render();
+      return;
+    }
+    if (action === "money-save") {
+      this._saveMoney(target.dataset.member, target.dataset.kind);
+      return;
+    }
+    if (action === "money-delete") {
+      this._deleteMoney(target.dataset.member, target.dataset.entry);
     }
     if (action === "toggle-member") {
       this._editingMember = this._editingMember === target.dataset.member ? null : target.dataset.member;

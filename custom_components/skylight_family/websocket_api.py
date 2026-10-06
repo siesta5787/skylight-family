@@ -27,17 +27,23 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ACCOUNTS,
     CONF_CALENDARS,
     CONF_COLOR,
+    CONF_INTEREST_RATE,
+    CONF_MONEY_ENABLED,
     CONF_PERSON,
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
     CONF_REWARDS_ENABLED,
     CONF_STAR_GOAL,
     CONF_TODO,
+    DEFAULT_INTEREST_RATE,
     DEFAULT_RESET_TIME,
     DEFAULT_STAR_GOAL,
     DOMAIN,
+    KIND_DEPOSIT,
+    KIND_EXPENSE,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
     WEEKDAY_PRESET_FIELDS,
@@ -52,8 +58,9 @@ from .helpers import (
     require_entry,
     require_subentry,
 )
+from .money import interest_rate, money_enabled
+from .money import tracked_members as money_members
 from .rewards import (
-    RewardsCoordinator,
     rewards_enabled,
     star_goal,
     tracked_members,
@@ -68,6 +75,10 @@ WS_MEMBER_UPDATE = f"{DOMAIN}/member/update"
 WS_APPLY_PRESET = f"{DOMAIN}/apply_preset"
 WS_REWARDS = f"{DOMAIN}/rewards"
 WS_SET_STAR = f"{DOMAIN}/rewards/set_star"
+WS_MONEY = f"{DOMAIN}/money"
+WS_MONEY_LEDGER = f"{DOMAIN}/money/ledger"
+WS_MONEY_ADD = f"{DOMAIN}/money/add"
+WS_MONEY_DELETE = f"{DOMAIN}/money/delete"
 
 _WEEKDAY_KEYS = [key for key, _label in WEEKDAYS]
 
@@ -89,6 +100,10 @@ def async_register(hass: HomeAssistant) -> None:
         ws_apply_preset,
         ws_rewards,
         ws_set_star,
+        ws_money,
+        ws_money_ledger,
+        ws_money_add,
+        ws_money_delete,
     ):
         websocket_api.async_register_command(hass, handler)
 
@@ -104,6 +119,10 @@ def _member_payload(subentry: ConfigSubentry) -> dict[str, Any]:
         CONF_COLOR: data.get(CONF_COLOR),
         CONF_REWARDS_ENABLED: bool(data.get(CONF_REWARDS_ENABLED, False)),
         CONF_STAR_GOAL: int(data.get(CONF_STAR_GOAL, DEFAULT_STAR_GOAL)),
+        CONF_MONEY_ENABLED: bool(data.get(CONF_MONEY_ENABLED, False)),
+        CONF_INTEREST_RATE: float(
+            data.get(CONF_INTEREST_RATE, DEFAULT_INTEREST_RATE)
+        ),
         # weekday key -> preset subentry_id (or None). The panel resolves ids
         # to titles itself, from the presets list in the same payload.
         "routine": {
@@ -265,6 +284,10 @@ def ws_preset_delete(
         vol.Optional(CONF_COLOR): vol.Any([int], None),
         vol.Optional(CONF_REWARDS_ENABLED): bool,
         vol.Optional(CONF_STAR_GOAL): vol.All(int, vol.Range(min=1, max=7)),
+        vol.Optional(CONF_MONEY_ENABLED): bool,
+        vol.Optional(CONF_INTEREST_RATE): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=100)
+        ),
         vol.Optional("routine"): _ROUTINE_SCHEMA,
     }
 )
@@ -300,6 +323,8 @@ def ws_member_update(
         CONF_COLOR,
         CONF_REWARDS_ENABLED,
         CONF_STAR_GOAL,
+        CONF_MONEY_ENABLED,
+        CONF_INTEREST_RATE,
     ):
         if key not in msg:
             continue
@@ -363,7 +388,7 @@ def ws_rewards(
 ) -> None:
     """Star state for every reward-tracked member, for one week."""
     entry = require_entry(hass)
-    coordinator: RewardsCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data.rewards
 
     today = dt_util.now().date()
     requested = msg.get("week_start") or today
@@ -426,8 +451,135 @@ async def ws_set_star(
             f"Reward tracking is turned off for {subentry.title}"
         )
 
-    coordinator: RewardsCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data.rewards
     await coordinator.async_set_star(subentry.subentry_id, msg["date"], msg["star"])
     connection.send_result(
         msg["id"], coordinator.week_snapshot(subentry.subentry_id, week_start(msg["date"]))
     )
+
+
+def _money_payload(subentry: ConfigSubentry, summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "subentry_id": subentry.subentry_id,
+        "name": subentry.title,
+        CONF_COLOR: subentry.data.get(CONF_COLOR),
+        "interest_rate": float(interest_rate(subentry) * 100),
+        # Everything monetary crosses the wire as integer cents; the panel
+        # formats it. Floats here would be a slow-motion rounding bug.
+        "accounts": summary,
+    }
+
+
+@websocket_api.websocket_command({vol.Required("type"): WS_MONEY})
+@callback
+def ws_money(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Balances for every money-tracked member."""
+    entry = require_entry(hass)
+    data = entry.runtime_data.money.data or {}
+    connection.send_result(
+        msg["id"],
+        {
+            "currency": hass.config.currency,
+            "today": dt_util.now().date().isoformat(),
+            "members": [
+                _money_payload(subentry, data.get(subentry.subentry_id, {}))
+                for subentry in money_members(entry)
+            ],
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_MONEY_LEDGER,
+        vol.Required("subentry_id"): str,
+        # Omit for both accounts in one list.
+        vol.Optional("account"): vol.In(ACCOUNTS),
+    }
+)
+@callback
+def ws_money_ledger(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """One member's ledger, newest first, with derived interest rows."""
+    entry = require_entry(hass)
+    subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_MEMBER)
+    if not money_enabled(subentry):
+        raise HomeAssistantError(f"Money tracking is turned off for {subentry.title}")
+
+    ledger = entry.runtime_data.money.ledger(subentry, msg.get("account"))
+    connection.send_result(
+        msg["id"],
+        {
+            "currency": hass.config.currency,
+            "name": subentry.title,
+            "interest_rate": float(interest_rate(subentry) * 100),
+            **ledger,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_MONEY_ADD,
+        vol.Required("subentry_id"): str,
+        vol.Required("account"): vol.In(ACCOUNTS),
+        vol.Required("kind"): vol.In((KIND_DEPOSIT, KIND_EXPENSE)),
+        vol.Required("amount_cents"): vol.All(int, vol.Range(min=1)),
+        vol.Required("date"): cv.date,
+        vol.Optional("note", default=""): str,
+    }
+)
+@websocket_api.async_response
+async def ws_money_add(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Record a deposit or an expense, on any date up to today."""
+    check_panel_write_access(hass, connection.user)
+    entry = require_entry(hass)
+    subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_MEMBER)
+    if not money_enabled(subentry):
+        raise HomeAssistantError(f"Money tracking is turned off for {subentry.title}")
+
+    added = await entry.runtime_data.money.async_add(
+        member_id=subentry.subentry_id,
+        account=msg["account"],
+        kind=msg["kind"],
+        amount_cents=msg["amount_cents"],
+        day=msg["date"],
+        note=msg["note"],
+    )
+    connection.send_result(msg["id"], added)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_MONEY_DELETE,
+        vol.Required("subentry_id"): str,
+        vol.Required("entry_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_money_delete(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a ledger entry. Interest rows have no id and can't be removed —
+    they're derived, so the way to change them is to fix the entries that
+    produced them."""
+    check_panel_write_access(hass, connection.user)
+    entry = require_entry(hass)
+    subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_MEMBER)
+    removed = await entry.runtime_data.money.async_delete(
+        subentry.subentry_id, msg["entry_id"]
+    )
+    connection.send_result(msg["id"], removed)

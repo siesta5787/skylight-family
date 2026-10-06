@@ -47,7 +47,9 @@
             "preset_sat": "Saturday preset",
             "preset_sun": "Sunday preset",
             "rewards_enabled": "Track stars and rewards for this member",
-            "star_goal": "Stars needed each week for the prize"
+            "star_goal": "Stars needed each week for the prize",
+            "money_enabled": "Track pocket money for this member",
+            "interest_rate": "Yearly interest rate on long-term savings"
           }
         },
         "reconfigure": {
@@ -66,7 +68,9 @@
             "preset_sat": "Saturday preset",
             "preset_sun": "Sunday preset",
             "rewards_enabled": "Track stars and rewards for this member",
-            "star_goal": "Stars needed each week for the prize"
+            "star_goal": "Stars needed each week for the prize",
+            "money_enabled": "Track pocket money for this member",
+            "interest_rate": "Yearly interest rate on long-term savings"
           }
         }
       }
@@ -116,6 +120,32 @@
         "date": {
           "name": "Date",
           "description": "Which day to change. Defaults to today."
+        }
+      }
+    },
+    "add_money": {
+      "name": "Add money entry",
+      "description": "Records a deposit or an expense on a Skylight Family member's short-term or long-term account.",
+      "fields": {
+        "account": {
+          "name": "Account",
+          "description": "Short term or long term."
+        },
+        "kind": {
+          "name": "Type",
+          "description": "Deposit adds to the balance, expense takes away."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "A positive amount, e.g. 2.50."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day it happened. Defaults to today. Back-dating is allowed and recalculates any interest earned since."
+        },
+        "note": {
+          "name": "Note",
+          "description": "What it was for, e.g. \"Allowance\"."
         }
       }
     }

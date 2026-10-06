@@ -70,7 +70,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: RewardsCoordinator = entry.runtime_data
+    coordinator = entry.runtime_data.rewards
 
     for subentry in entry.subentries.values():
         if subentry.subentry_type != SUBENTRY_TYPE_MEMBER:
