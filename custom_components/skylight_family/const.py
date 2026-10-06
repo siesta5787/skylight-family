@@ -83,7 +83,7 @@ PANEL_FILENAME = "skylight-panel.js"
 # Cache buster appended to the panel's module_url. Browsers cache ES modules
 # aggressively; bump this on every edit to frontend/skylight-panel.js or
 # users keep getting the old panel after an update.
-PANEL_JS_VERSION = "1"
+PANEL_JS_VERSION = "2"
 
 # Seeded once on first setup, as ordinary preset subentries — not treated
 # specially afterward, so editing/deleting them works the same as any

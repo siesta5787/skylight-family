@@ -247,6 +247,81 @@ const STYLES = `
     font-style: italic;
   }
   .spacer { flex: 1; }
+
+  .week-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 var(--skylight-gap);
+    flex-wrap: wrap;
+  }
+  .week-nav .label { font-size: 15px; font-weight: 500; }
+  .week {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .day-cell { text-align: center; }
+  .day-cell .dow {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--secondary-text-color, #727272);
+  }
+  .star {
+    width: 100%;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 10px;
+    background: var(--card-background-color, #fff);
+    color: var(--disabled-text-color, #bdbdbd);
+    font-size: 26px;
+    line-height: 1;
+    padding: 10px 0 8px;
+    margin-top: 4px;
+    cursor: pointer;
+  }
+  .star:hover:not([disabled]) { border-color: var(--primary-color, #03a9f4); }
+  .star.earned {
+    color: #f6b73c;
+    border-color: #f6b73c;
+    background: rgba(246, 183, 60, 0.12);
+  }
+  .star.today { box-shadow: inset 0 0 0 2px var(--primary-color, #03a9f4); }
+  .star[disabled] { cursor: default; opacity: 0.45; }
+  .source {
+    font-size: 10px;
+    letter-spacing: 0.3px;
+    color: var(--secondary-text-color, #727272);
+    margin-top: 3px;
+    min-height: 14px;
+  }
+  .source button {
+    font: inherit;
+    font-size: 10px;
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--primary-color, #03a9f4);
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .facts { margin-top: 14px; font-size: 14px; }
+  .facts div { margin: 3px 0; }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--divider-color, #e0e0e0);
+    color: var(--primary-text-color, #212121);
+  }
+  .badge.yes { background: rgba(76, 175, 80, 0.2); color: #2e7d32; }
+  .badge.no { background: rgba(0, 0, 0, 0.08); }
+  .badge.prize { background: rgba(246, 183, 60, 0.25); color: #8a5a00; }
+  .score { font-size: 18px; font-weight: 500; white-space: nowrap; }
+  .score .of { color: var(--secondary-text-color, #727272); font-size: 14px; }
 `;
 
 const MENU_ICON =
@@ -266,6 +341,10 @@ class SkylightFamilyPanel extends HTMLElement {
     this._editingMember = null;
     this._editingPreset = null;
     this._started = false;
+    // Rewards tab: the payload, and which Monday is being viewed (null =
+    // the current week, so it keeps following the clock).
+    this._rewards = null;
+    this._rewardsWeek = null;
   }
 
   set hass(hass) {
@@ -297,12 +376,33 @@ class SkylightFamilyPanel extends HTMLElement {
       this._data = await this._hass.callWS({ type: "skylight_family/config" });
       this._loadError = null;
     } catch (err) {
-      this._loadError = err && (err.message || err.code) ? err.message || err.code : String(err);
+      this._loadError = this._errorText(err);
+    }
+    if (this._tab === "rewards" && this._data && this._data.configured) {
+      await this._loadRewards();
+      return;
     }
     this._render();
   }
 
-  async _call(message, successText) {
+  async _loadRewards() {
+    const message = { type: "skylight_family/rewards" };
+    if (this._rewardsWeek) message.week_start = this._rewardsWeek;
+    try {
+      this._rewards = await this._hass.callWS(message);
+      this._loadError = null;
+    } catch (err) {
+      this._loadError = this._errorText(err);
+    }
+    this._render();
+  }
+
+  _errorText(err) {
+    if (err && (err.message || err.code)) return err.message || err.code;
+    return String(err);
+  }
+
+  async _call(message, successText, reload) {
     if (this._busy) return null;
     this._busy = true;
     this._render();
@@ -311,15 +411,13 @@ class SkylightFamilyPanel extends HTMLElement {
       if (successText) this._notify(successText(result));
       return result;
     } catch (err) {
-      this._notify(
-        "Skylight: " + (err && (err.message || err.code) ? err.message || err.code : String(err)),
-      );
+      this._notify("Skylight: " + this._errorText(err));
       return null;
     } finally {
       this._busy = false;
       // Every mutation reloads the config entry server-side, so re-read
       // rather than trying to patch local state by hand.
-      await this._load();
+      await (reload ? reload.call(this) : this._load());
     }
   }
 
@@ -366,7 +464,9 @@ class SkylightFamilyPanel extends HTMLElement {
           ? `<div class="content"><div class="card"><h2>Not set up yet</h2><p class="sub">Add the Skylight Family integration from Settings &rarr; Devices &amp; services first, then come back here.</p></div></div>`
           : this._tab === "people"
             ? this._renderPeople()
-            : this._renderPresets();
+            : this._tab === "presets"
+              ? this._renderPresets()
+              : this._renderRewards();
 
     this._shadow.innerHTML = `
       <style>${STYLES}</style>
@@ -380,6 +480,8 @@ class SkylightFamilyPanel extends HTMLElement {
           aria-selected="${this._tab === "people"}">People</button>
         <button class="tab" role="tab" data-action="tab" data-tab="presets"
           aria-selected="${this._tab === "presets"}">Presets</button>
+        <button class="tab" role="tab" data-action="tab" data-tab="rewards"
+          aria-selected="${this._tab === "rewards"}">Rewards</button>
       </div>
       ${body}
     `;
@@ -600,6 +702,147 @@ class SkylightFamilyPanel extends HTMLElement {
     </div>`;
   }
 
+  /* ------------------------------------------------------------- rewards */
+
+  _renderRewards() {
+    if (!this._rewards) {
+      return `<div class="content"><p class="empty">Loading…</p></div>`;
+    }
+
+    const { members, weekdays, today, this_week_start: thisWeek } = this._rewards;
+    if (!members.length) {
+      return `<div class="content"><div class="card"><h2>Nobody's being tracked yet</h2>
+        <p class="sub">Turn on <em>Track stars and rewards</em> for a family member in
+        Settings &rarr; Devices &amp; services &rarr; Skylight Family &rarr; (member)
+        &rarr; Edit, and they'll show up here.</p></div></div>`;
+    }
+
+    const viewing = members[0].week_start;
+    const isThisWeek = viewing === thisWeek;
+
+    return `<div class="content">
+      <div class="week-nav">
+        <button class="action" data-action="week" data-delta="-1">&larr; Earlier</button>
+        <span class="label">${esc(this._weekLabel(viewing, isThisWeek))}</span>
+        <button class="action" data-action="week" data-delta="1"
+          ${isThisWeek ? "disabled" : ""}>Later &rarr;</button>
+        ${isThisWeek ? "" : '<button class="action" data-action="week-now">This week</button>'}
+      </div>
+      <p class="intro">Tap a day to award or take back a star by hand. Days decided by
+      the chore list are marked <em>auto</em>; your own changes stick as <em>manual</em>
+      until you reset them.</p>
+      ${members
+        .map((member) => this._renderRewardCard(member, weekdays, today, isThisWeek))
+        .join("")}
+    </div>`;
+  }
+
+  _weekLabel(weekStart, isThisWeek) {
+    const start = new Date(`${weekStart}T00:00:00`);
+    const end = new Date(start.getTime() + 6 * 86400000);
+    const fmt = (date) =>
+      date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    return `${isThisWeek ? "This week" : "Week"}: ${fmt(start)} – ${fmt(end)}`;
+  }
+
+  _renderRewardCard(member, weekdays, today, isThisWeek) {
+    const id = member.subentry_id;
+    const dates = Object.keys(member.days).sort();
+
+    const cells = dates
+      .map((dateIso, index) => {
+        const record = member.days[dateIso];
+        const future = dateIso > today;
+        const earned = !!(record && record.star);
+        const manual = !!(record && record.source === "manual");
+        const glyph = future ? "·" : earned ? "★" : "☆";
+        const classes = [
+          "star",
+          earned ? "earned" : "",
+          dateIso === today ? "today" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const label = (weekdays[index] || { label: dateIso }).label;
+
+        return `<div class="day-cell">
+          <div class="dow">${esc(label.slice(0, 3))}</div>
+          <button class="${classes}" data-action="star" data-member="${esc(id)}"
+            data-date="${esc(dateIso)}" data-star="${earned ? "off" : "on"}"
+            title="${esc(dateIso)}"
+            ${future || this._busy ? "disabled" : ""}>${glyph}</button>
+          <div class="source">${
+            future
+              ? ""
+              : manual
+                ? `manual <button data-action="star-auto" data-member="${esc(id)}"
+                     data-date="${esc(dateIso)}">reset</button>`
+                : "auto"
+          }</div>
+        </div>`;
+      })
+      .join("");
+
+    // Chore progress and tablet time only describe right now, so they'd be
+    // misleading next to a week being browsed in the past.
+    const facts = isThisWeek
+      ? `<div class="facts">
+          <div>Today: ${
+            member.chores_total
+              ? `${member.chores_done} of ${member.chores_total} chores done`
+              : "no chores assigned today"
+          }</div>
+          <div>Tablet time today:
+            <span class="badge ${member.tablet_time ? "yes" : "no"}">${
+              member.tablet_time ? "YES" : "no"
+            }</span></div>
+          <div>Weekly prize: ${
+            member.prize_earned
+              ? '<span class="badge prize">EARNED</span>'
+              : `${member.goal - member.stars} more star${
+                  member.goal - member.stars === 1 ? "" : "s"
+                } needed`
+          }</div>
+        </div>`
+      : `<div class="facts"><div>${
+          member.prize_earned
+            ? '<span class="badge prize">Prize earned this week</span>'
+            : `${member.stars} of ${member.goal} stars that week`
+        }</div></div>`;
+
+    return `<div class="card">
+      <div class="card-head">
+        <span class="dot" style="background:${esc(rgbToHex(member.color))}"></span>
+        <h2>${esc(member.name)}</h2>
+        <span class="score">${member.stars}<span class="of"> / ${member.goal} ★</span></span>
+      </div>
+      <div class="week">${cells}</div>
+      ${facts}
+    </div>`;
+  }
+
+  _shiftWeek(weekStart, delta) {
+    const date = new Date(`${weekStart}T00:00:00`);
+    date.setDate(date.getDate() + delta * 7);
+    // Built by hand rather than via toISOString(), which would convert this
+    // local midnight to UTC and land on the previous day east of Greenwich.
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  _setStar(memberId, dateIso, star) {
+    this._call(
+      {
+        type: "skylight_family/rewards/set_star",
+        subentry_id: memberId,
+        date: dateIso,
+        star,
+      },
+      null,
+      this._loadRewards,
+    );
+  }
+
   _presetOptions(presets, selected, placeholder) {
     return (
       `<option value=""${selected ? "" : " selected"}>${esc(placeholder)}</option>` +
@@ -646,10 +889,43 @@ class SkylightFamilyPanel extends HTMLElement {
       this._editingMember = null;
       this._editingPreset = null;
       this._render();
+      if (this._tab === "rewards") this._loadRewards();
       return;
     }
     if (action === "reload") {
-      this._load();
+      if (this._tab === "rewards") this._loadRewards();
+      else this._load();
+      return;
+    }
+    if (action === "week") {
+      const current =
+        this._rewardsWeek ||
+        (this._rewards && this._rewards.this_week_start) ||
+        null;
+      if (!current) return;
+      const next = this._shiftWeek(current, Number(target.dataset.delta));
+      // Following the clock is more useful than pinning to a date, so drop
+      // back to null once we land on the current week.
+      this._rewardsWeek =
+        this._rewards && next === this._rewards.this_week_start ? null : next;
+      this._loadRewards();
+      return;
+    }
+    if (action === "week-now") {
+      this._rewardsWeek = null;
+      this._loadRewards();
+      return;
+    }
+    if (action === "star") {
+      this._setStar(
+        target.dataset.member,
+        target.dataset.date,
+        target.dataset.star === "on",
+      );
+      return;
+    }
+    if (action === "star-auto") {
+      this._setStar(target.dataset.member, target.dataset.date, null);
       return;
     }
     if (action === "toggle-member") {

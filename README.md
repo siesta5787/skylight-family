@@ -30,6 +30,8 @@ what*, Skylight HA owns the *display*.
     to-do list, calendars and colour belong to them.
   - **Presets** — view, add, edit and delete presets, and apply one to a
     member from that side too.
+  - **Rewards** — each tracked kid's week of stars, tappable to award or
+    take one back, with a pager for earlier weeks.
 
   It's a view of the same data as Settings → Devices & Services, not a
   parallel store, so you can use either. Adding and removing *members*
@@ -49,8 +51,10 @@ what*, Skylight HA owns the *display*.
     `…_star_today`, `…_tablet_time` (today's allowance — the hook for
     whatever enforces screen time) and `…_weekly_prize`. Plus a
     `skylight_family.set_star` service.
-  - *The panel UI for this is still to come* — for now it's managed through
-    Developer Tools → Actions or automations.
+  - Managed from the sidebar panel's **Rewards** tab: a card per kid with
+    seven tappable star cells, a week pager for browsing and fixing up past
+    weeks, and today's chore progress, tablet-time status and prize
+    shortfall underneath.
 - **A `sensor.skylight_family_<name>` per member** — the only new state
   this integration creates, carrying the mapping (`person_entity_id`,
   `calendar_entity_ids`,

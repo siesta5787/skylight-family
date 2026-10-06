@@ -75,9 +75,12 @@ it.
   the day-to-day UI so none of this needs digging through Settings →
   Devices & Services. Two tabs: *People* (each member's 7 weekday preset
   dropdowns + Save, a "push a preset right now" row, and a collapsible
-  Linked entities form for name/person/to-do/calendars/colour) and
+  Linked entities form for name/person/to-do/calendars/colour),
   *Presets* (view/add/edit/delete presets, plus apply-to-a-member from that
-  side too). Registered via `panel_custom.async_register_panel` with
+  side too) and *Rewards* (a card per tracked member: seven tappable star
+  cells with their `auto`/`manual` source, a week pager, and today's chore
+  progress / tablet time / prize status). Registered via
+  `panel_custom.async_register_panel` with
   `component_name="custom"` and `embed_iframe=False`.
 - **`panel_admin_only` option** (default on) — the integration owns this
   because HA core ships no UI that can set `require_admin` on a *custom*
@@ -192,13 +195,20 @@ it.
   custom theme perfectly.
 - `confirm()` is used for the delete-preset prompt (browser-native dialog,
   not HA-styled). Works fine, just visibly not HA.
-- **The reward tracker has no UI yet.** The backend, entities, service and WS
-  commands are done and tested, but the panel's *Rewards* tab and the wall
-  tablet's star row are not built — turning rewards on today means managing
-  it from Developer Tools → Actions or an automation. The panel tab is the
-  agreed next step; the design mocked up for it is a card per kid with seven
-  tappable star cells, a week back/forward pager, and today's chore progress
-  plus tablet-time status underneath.
+- **The wall tablet's star row isn't built**, and isn't being built here —
+  the user's other agent owns the Skylight HA side. It needs no backend
+  work: `sensor.*_stars` already carries the whole week in its attributes.
+- **Rewards tab behaviour worth not "fixing" by accident**: a tap always
+  writes a *manual* override (to the opposite of the day's current state),
+  and manual cells grow a `reset` link that clears back to automatic —
+  rather than one tap cycling through three states, which reads as
+  unpredictable. Every day of a *past* week stays tappable on purpose, so a
+  forgotten star can be awarded later; only genuinely future days are
+  disabled. Chore progress and tablet time are hidden when browsing a past
+  week, since they describe right now and would be misleading there.
+- The Rewards tab tracks the current week by holding `_rewardsWeek = null`
+  rather than pinning today's Monday, so the panel left open overnight rolls
+  over with the clock instead of getting stuck on yesterday's week.
 - Reward tracking is per member and **off by default**, which means an
   existing install sees no new entities until it's switched on in the
   member's Settings form. That's deliberate (adults don't need stars), but
@@ -346,6 +356,28 @@ same WSL instance — 38 live checks plus a separate timing test, all passing:
   `freezing stars for <yesterday>` → `clearing completed items from …` →
   `Cleared completed items from …` → `applying 2 item(s) to …`.
 
+**2026-10-06 (later)**, the panel's Rewards tab:
+
+- jsdom suite grown to **80 checks**, all passing — the week grid (7 cells,
+  weekday headers in order, earned/today/disabled states), tapping an
+  unstarred day awarding it, tapping a starred day taking it back, `reset`
+  clearing the override to `null`, reward actions re-reading `rewards`
+  rather than `config`, the week pager (Later disabled on the current week,
+  Earlier asking for the previous Monday, "This week" dropping the filter),
+  past weeks hiding today-only facts while staying editable, and the
+  nobody-tracked empty state.
+- **A second harness renders the panel against payloads captured from the
+  live backend** (`sk-capture.py` → `real.mjs`), so drift between what the
+  WS API sends and what the panel expects fails loudly: the rendered day
+  cells' `title` attributes equal the backend's own sorted date keys, the
+  `today` highlight lands on the backend's `today`, and the earned/manual
+  cell counts match the payload. That's the check that would have caught a
+  date-key or ordering mismatch; the fake-data suite can't.
+- `PANEL_JS_VERSION` bump to `2` confirmed live: the registered panel's
+  `module_url` came back as `…/skylight-panel.js?v=2`.
+- The three live backend suites (38 reward checks, panel API, admin toggle)
+  all still pass unchanged.
+
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
   (connection refused — the automation host isn't this machine), and
@@ -478,7 +510,11 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
     throws), stub `globalThis.confirm`, `await import()` the panel file,
     then `document.createElement("skylight-family-panel")`, give it a fake
     `hass` with a recording `callWS`, and drive it by calling `.click()` on
-    elements found in `el.shadowRoot`. Shadow DOM, `composedPath()` and
+    elements found in `el.shadowRoot`. **Keep the second harness that feeds
+    it real captured payloads too** — a fake-data suite only proves the panel
+    agrees with itself. Careful building dates in the fake data: use
+    `Date.UTC(...)` rather than local midnight + `toISOString()`, which
+    silently shifts a day east of Greenwich. Shadow DOM, `composedPath()` and
     event retargeting all work. Each click path kicks off async work, so
     await a handful of `setTimeout(…, 0)` turns before asserting (`_call`
     awaits the WS round trip *and then* a config reload).
