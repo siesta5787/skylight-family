@@ -583,6 +583,22 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
   users keep running the old panel after an update even post-restart.
   (`cache_headers=False` on the static path helps but isn't sufficient on
   its own.)
+- **The Android companion app needs a full swipe-close after any panel JS
+  change — the cache buster is not enough.** Confirmed on the user's device
+  2026-10-06 with the Rewards tab: HACS was on the right version, HA was
+  serving the correct `?v=2` file, and the app still showed the two-tab
+  panel. Reloading inside the app didn't help; swiping the app fully closed
+  and reopening did. Likely because the companion app keeps its WebView
+  alive across backgrounding, and the frontend only `import()`s
+  `module_url` once per page load — so the already-imported module object
+  survives in memory no matter what URL a fresh fetch would use. Tell the
+  user this up front when shipping a panel change, rather than letting them
+  conclude the update didn't install. (Desktop browsers just need
+  Ctrl+Shift+R.)
+- Diagnosing "am I running the new panel?" currently needs fetching
+  `/skylight_family_static/skylight-panel.js` by hand and grepping it,
+  because the panel doesn't display its own version anywhere. Worth adding a
+  marker if this comes up again.
 - **Decorator order on WebSocket commands**: `@require_admin` outermost,
   then `@websocket_api.websocket_command({...})`, then `@callback` (sync
   handlers) or `@websocket_api.async_response` (async ones) innermost.
