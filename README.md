@@ -81,6 +81,20 @@ Not yet published to HACS's default store. Add as a HACS custom repository:
 Or by hand: copy `custom_components/skylight_family/` into your HA config's
 `custom_components/` directory and restart.
 
+### After updating
+
+Restarting Home Assistant isn't always enough to see changes to the sidebar
+panel, because the panel is a JavaScript module the frontend loads once:
+
+- **Android/iOS companion app** — swipe the app fully closed and reopen it.
+  Pulling to reload inside the app is *not* enough; the app keeps its web
+  view alive in the background with the old panel still loaded.
+- **Desktop browser** — hard reload (Ctrl+Shift+R / Cmd+Shift+R).
+
+If the panel still looks unchanged after that, it's genuinely the old
+version on disk — in HACS, use **Update information** to make it re-read the
+repository, then **Redownload**, then restart.
+
 ## Set up
 
 1. **Settings → Devices & Services → Add Integration → Skylight Family.**
