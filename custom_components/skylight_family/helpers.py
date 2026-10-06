@@ -97,6 +97,7 @@ async def async_clear_completed(hass: HomeAssistant, todo_entity_id: str) -> Non
             target={"entity_id": todo_entity_id},
             blocking=True,
         )
+        _LOGGER.debug("Cleared completed items from %s", todo_entity_id)
     except Exception:  # noqa: BLE001 - entity may not support deletion
         _LOGGER.warning("Could not clear completed items from %s", todo_entity_id)
 

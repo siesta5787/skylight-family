@@ -8,3 +8,20 @@ apply_preset:
       example: "Toddler"
       selector:
         text:
+
+set_star:
+  target:
+    entity:
+      integration: skylight_family
+  fields:
+    star:
+      # Leave this out entirely to drop the manual override and let the day
+      # go back to being decided by whether the chores got done.
+      required: false
+      selector:
+        boolean:
+    date:
+      required: false
+      example: "2026-10-05"
+      selector:
+        date:

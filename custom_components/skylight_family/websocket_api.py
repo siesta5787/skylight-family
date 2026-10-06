@@ -22,6 +22,9 @@ from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CALENDARS,
@@ -29,8 +32,11 @@ from .const import (
     CONF_PERSON,
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
+    CONF_REWARDS_ENABLED,
+    CONF_STAR_GOAL,
     CONF_TODO,
     DEFAULT_RESET_TIME,
+    DEFAULT_STAR_GOAL,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
@@ -46,6 +52,13 @@ from .helpers import (
     require_entry,
     require_subentry,
 )
+from .rewards import (
+    RewardsCoordinator,
+    rewards_enabled,
+    star_goal,
+    tracked_members,
+    week_start,
+)
 
 WS_GET_CONFIG = f"{DOMAIN}/config"
 WS_PRESET_CREATE = f"{DOMAIN}/preset/create"
@@ -53,6 +66,8 @@ WS_PRESET_UPDATE = f"{DOMAIN}/preset/update"
 WS_PRESET_DELETE = f"{DOMAIN}/preset/delete"
 WS_MEMBER_UPDATE = f"{DOMAIN}/member/update"
 WS_APPLY_PRESET = f"{DOMAIN}/apply_preset"
+WS_REWARDS = f"{DOMAIN}/rewards"
+WS_SET_STAR = f"{DOMAIN}/rewards/set_star"
 
 _WEEKDAY_KEYS = [key for key, _label in WEEKDAYS]
 
@@ -72,6 +87,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_preset_delete,
         ws_member_update,
         ws_apply_preset,
+        ws_rewards,
+        ws_set_star,
     ):
         websocket_api.async_register_command(hass, handler)
 
@@ -85,6 +102,8 @@ def _member_payload(subentry: ConfigSubentry) -> dict[str, Any]:
         CONF_CALENDARS: list(data.get(CONF_CALENDARS, [])),
         CONF_TODO: data.get(CONF_TODO),
         CONF_COLOR: data.get(CONF_COLOR),
+        CONF_REWARDS_ENABLED: bool(data.get(CONF_REWARDS_ENABLED, False)),
+        CONF_STAR_GOAL: int(data.get(CONF_STAR_GOAL, DEFAULT_STAR_GOAL)),
         # weekday key -> preset subentry_id (or None). The panel resolves ids
         # to titles itself, from the presets list in the same payload.
         "routine": {
@@ -244,6 +263,8 @@ def ws_preset_delete(
         vol.Optional(CONF_CALENDARS): [str],
         vol.Optional(CONF_TODO): vol.Any(str, None),
         vol.Optional(CONF_COLOR): vol.Any([int], None),
+        vol.Optional(CONF_REWARDS_ENABLED): bool,
+        vol.Optional(CONF_STAR_GOAL): vol.All(int, vol.Range(min=1, max=7)),
         vol.Optional("routine"): _ROUTINE_SCHEMA,
     }
 )
@@ -272,7 +293,14 @@ def ws_member_update(
         # because the config flow's name field reads its default from data.
         data[CONF_NAME] = title
 
-    for key in (CONF_PERSON, CONF_CALENDARS, CONF_TODO, CONF_COLOR):
+    for key in (
+        CONF_PERSON,
+        CONF_CALENDARS,
+        CONF_TODO,
+        CONF_COLOR,
+        CONF_REWARDS_ENABLED,
+        CONF_STAR_GOAL,
+    ):
         if key not in msg:
             continue
         if msg[key] in (None, ""):
@@ -317,4 +345,89 @@ async def ws_apply_preset(
     connection.send_result(
         msg["id"],
         {"added": added, "member": member.title, "preset": preset.title},
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_REWARDS,
+        # Monday of the week to show. Defaults to the current week.
+        vol.Optional("week_start"): cv.date,
+    }
+)
+@callback
+def ws_rewards(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Star state for every reward-tracked member, for one week."""
+    entry = require_entry(hass)
+    coordinator: RewardsCoordinator = entry.runtime_data
+
+    today = dt_util.now().date()
+    requested = msg.get("week_start") or today
+    start = week_start(requested)
+
+    payload = []
+    for subentry in tracked_members(entry):
+        member_id = subentry.subentry_id
+        live = (coordinator.data or {}).get(member_id, {})
+        snapshot = coordinator.week_snapshot(member_id, start)
+        payload.append(
+            {
+                "subentry_id": member_id,
+                "name": subentry.title,
+                CONF_COLOR: subentry.data.get(CONF_COLOR),
+                CONF_TODO: subentry.data.get(CONF_TODO),
+                "goal": star_goal(subentry),
+                "prize_earned": snapshot["stars"] >= star_goal(subentry),
+                # Only meaningful for the current week; the panel shows them
+                # on today's cell.
+                "chores_done": live.get("chores_done", 0),
+                "chores_total": live.get("chores_total", 0),
+                "tablet_time": live.get("tablet_time", False),
+                **snapshot,
+            }
+        )
+
+    connection.send_result(
+        msg["id"],
+        {
+            "today": today.isoformat(),
+            "this_week_start": week_start(today).isoformat(),
+            "weekdays": [{"key": key, "label": label} for key, label in WEEKDAYS],
+            "members": payload,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_SET_STAR,
+        vol.Required("subentry_id"): str,
+        vol.Required("date"): cv.date,
+        # null hands the day back to automatic evaluation.
+        vol.Required("star"): vol.Any(bool, None),
+    }
+)
+@websocket_api.async_response
+async def ws_set_star(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Award, revoke, or un-override a single day's star."""
+    check_panel_write_access(hass, connection.user)
+    entry = require_entry(hass)
+    subentry = require_subentry(entry, msg["subentry_id"], SUBENTRY_TYPE_MEMBER)
+    if not rewards_enabled(subentry):
+        raise HomeAssistantError(
+            f"Reward tracking is turned off for {subentry.title}"
+        )
+
+    coordinator: RewardsCoordinator = entry.runtime_data
+    await coordinator.async_set_star(subentry.subentry_id, msg["date"], msg["star"])
+    connection.send_result(
+        msg["id"], coordinator.week_snapshot(subentry.subentry_id, week_start(msg["date"]))
     )

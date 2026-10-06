@@ -26,6 +26,29 @@ WEEKDAY_PRESET_FIELDS: dict[str, str] = {key: f"preset_{key}" for key, _ in WEEK
 # Preset subentry fields
 CONF_PRESET_ITEMS = "items"
 
+# Reward tracking, per member. Off by default so adults don't get star
+# entities they'll never use.
+CONF_REWARDS_ENABLED = "rewards_enabled"
+CONF_STAR_GOAL = "star_goal"
+DEFAULT_STAR_GOAL = 6
+
+# Stars are history, not configuration, so they live in their own Store
+# rather than in subentry data.
+STORAGE_KEY = f"{DOMAIN}.rewards"
+STORAGE_VERSION = 1
+# How much history to keep. Enough for the panel to browse back a couple of
+# months; anything older gets pruned so the store stays small.
+REWARDS_KEEP_DAYS = 70
+
+# How a day's star was decided. A manual entry always wins over the
+# automatic result and stays put until it's cleared again.
+SOURCE_AUTO = "auto"
+SOURCE_MANUAL = "manual"
+
+# unique_id suffixes of the entities that only exist while reward tracking is
+# on, so they can be cleaned out of the registry when it's turned off.
+REWARD_ENTITY_SUFFIXES = ("stars", "star_today", "tablet_time", "weekly_prize")
+
 # Entry options
 CONF_RESET_TIME = "reset_time"
 DEFAULT_RESET_TIME = "04:00:00"
@@ -40,6 +63,11 @@ DEFAULT_PANEL_ADMIN_ONLY = True
 # Service: skylight_family.apply_preset
 SERVICE_APPLY_PRESET = "apply_preset"
 ATTR_PRESET = "preset"
+
+# Service: skylight_family.set_star
+SERVICE_SET_STAR = "set_star"
+ATTR_DATE = "date"
+ATTR_STAR = "star"
 
 SUBENTRY_TYPE_MEMBER = "member"
 SUBENTRY_TYPE_PRESET = "preset"

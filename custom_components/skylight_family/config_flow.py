@@ -30,9 +30,12 @@ from .const import (
     CONF_PERSON,
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
+    CONF_REWARDS_ENABLED,
+    CONF_STAR_GOAL,
     CONF_TODO,
     DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
+    DEFAULT_STAR_GOAL,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
@@ -147,6 +150,25 @@ def _weekday_preset_fields(
     return fields
 
 
+def _reward_fields(current: dict[str, Any] | None = None) -> dict[Any, Any]:
+    """Per-member reward tracking: off by default, so adults don't get star
+    entities they'll never look at."""
+    return {
+        vol.Required(
+            CONF_REWARDS_ENABLED,
+            default=bool((current or {}).get(CONF_REWARDS_ENABLED, False)),
+        ): selector.BooleanSelector(),
+        vol.Required(
+            CONF_STAR_GOAL,
+            default=int((current or {}).get(CONF_STAR_GOAL, DEFAULT_STAR_GOAL)),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1, max=7, step=1, mode=selector.NumberSelectorMode.SLIDER
+            )
+        ),
+    }
+
+
 class MemberSubentryFlow(ConfigSubentryFlow):
     """Add / edit a single family member."""
 
@@ -176,6 +198,7 @@ class MemberSubentryFlow(ConfigSubentryFlow):
             vol.Optional(CONF_COLOR): selector.ColorRGBSelector(),
         }
         schema_dict.update(_weekday_preset_fields(preset_choices))
+        schema_dict.update(_reward_fields())
 
         return self.async_show_form(
             step_id="user", data_schema=vol.Schema(schema_dict)
@@ -210,6 +233,7 @@ class MemberSubentryFlow(ConfigSubentryFlow):
             _optional_key(CONF_COLOR, subentry.data.get(CONF_COLOR)): selector.ColorRGBSelector(),
         }
         schema_dict.update(_weekday_preset_fields(preset_choices, current=subentry.data))
+        schema_dict.update(_reward_fields(subentry.data))
 
         return self.async_show_form(
             step_id="reconfigure", data_schema=vol.Schema(schema_dict)

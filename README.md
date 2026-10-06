@@ -35,6 +35,22 @@ what*, Skylight HA owns the *display*.
   parallel store, so you can use either. Adding and removing *members*
   still happens in Settings. Admin-only by default, switchable from the
   integration's Configure page.
+- **Stars and rewards** — opt in per member (off by default). A kid earns one
+  star a day by finishing that day's preset chores; collect enough in a
+  Monday–Sunday week (6 by default) and the weekly prize is earned; earn
+  today's star and tablet time is allowed tomorrow.
+  - Today's star updates live as items get ticked off, and is recorded for
+    good at the daily reset — before completed items are cleared.
+  - You can award or revoke any past day by hand, which overrides the chores;
+    clear the override to hand the day back to automatic. A day with no
+    preset assigned can't be earned automatically, only granted.
+  - Per tracked member you get `sensor.…_stars` (state = stars this week,
+    with the whole week in its attributes) and three binary sensors:
+    `…_star_today`, `…_tablet_time` (today's allowance — the hook for
+    whatever enforces screen time) and `…_weekly_prize`. Plus a
+    `skylight_family.set_star` service.
+  - *The panel UI for this is still to come* — for now it's managed through
+    Developer Tools → Actions or automations.
 - **A `sensor.skylight_family_<name>` per member** — the only new state
   this integration creates, carrying the mapping (`person_entity_id`,
   `calendar_entity_ids`,

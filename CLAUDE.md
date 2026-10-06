@@ -116,6 +116,46 @@ it.
   `async_apply_preset_to_member`). It exists as its own module purely so
   `websocket_api.py` and `__init__.py` can both use them without a circular
   import back through the package's `__init__`.
+- **Star / reward tracking** (`rewards.py`), off per member by default
+  (`rewards_enabled`, with a `star_goal` defaulting to 6). The household
+  rule: one star a day for finishing that day's chores, `star_goal` stars in
+  a Monday–Sunday week earns a prize, and today's star earns tablet time
+  *tomorrow*. Four points matter:
+  - **Stars are history, not config**, so they live in their own
+    `homeassistant.helpers.storage.Store` (`.storage/skylight_family.rewards`,
+    `{member_id: {"YYYY-MM-DD": {"star": bool, "source": "auto"|"manual"}}}`),
+    pruned to `REWARDS_KEEP_DAYS`. Subentry data is for configuration only.
+  - **Today is live, past days are frozen.** A `RewardsCoordinator`
+    (`DataUpdateCoordinator`) recomputes today from the real to-do list
+    whenever a watched `todo.*` entity changes, so progress shows as it
+    happens. **The daily job must freeze yesterday's star *before*
+    `async_clear_completed` runs** — clearing completed items destroys the
+    only evidence. That ordering is the whole reason `_apply_daily_reset`
+    starts with `async_freeze_day`; don't reorder it.
+  - **A manual star always wins** (`source: "manual"`) until it's cleared
+    back to automatic by setting it to `null`. A day with **no preset
+    assigned can't be earned automatically** (nothing to measure) but can be
+    granted by hand — the user's choice, so "6 of 7" stays literal. Future
+    dates are refused outright, since they're always reported as "nothing
+    yet" and a star set on one would be silently discarded.
+  - Only items belonging to *that day's preset* count. Extra things a parent
+    adds during the day are ignored rather than held against the kid, and an
+    expected item that's been deleted off the list counts as done (some to-do
+    integrations remove rather than complete).
+- **Reward entities**, per tracked member: `sensor.…_stars` (state = stars
+  this week; attributes carry the whole week as a date-keyed `days` map plus
+  `goal`/`stars_needed`/`days_remaining`/`prize_earned`/`chores_done`/
+  `chores_total`/`tablet_time` — this is what the wall tablet reads), and
+  binary sensors `…_star_today`, `…_tablet_time` (today's allowance, i.e.
+  yesterday's star — the hook for anything enforcing screen time) and
+  `…_weekly_prize`. `_remove_stale_reward_entities` deletes them from the
+  registry when tracking is switched off, so they don't linger as
+  permanently `unavailable`; it matches `REWARD_ENTITY_SUFFIXES` rather than
+  "everything that isn't the mapping sensor" so a future per-member entity
+  doesn't get swept up.
+- **`skylight_family.set_star`** service plus `skylight_family/rewards` and
+  `skylight_family/rewards/set_star` WS commands (the latter takes an
+  optional `week_start` so the panel can browse and edit history).
 - No Lovelace cards and no custom theme — the sidebar panel is the only
   thing this integration renders in HA's frontend, and it's a standalone
   page, not a dashboard card. HA's built-in "To-do Lists" sidebar entry is
@@ -152,6 +192,17 @@ it.
   custom theme perfectly.
 - `confirm()` is used for the delete-preset prompt (browser-native dialog,
   not HA-styled). Works fine, just visibly not HA.
+- **The reward tracker has no UI yet.** The backend, entities, service and WS
+  commands are done and tested, but the panel's *Rewards* tab and the wall
+  tablet's star row are not built — turning rewards on today means managing
+  it from Developer Tools → Actions or an automation. The panel tab is the
+  agreed next step; the design mocked up for it is a card per kid with seven
+  tappable star cells, a week back/forward pager, and today's chore progress
+  plus tablet-time status underneath.
+- Reward tracking is per member and **off by default**, which means an
+  existing install sees no new entities until it's switched on in the
+  member's Settings form. That's deliberate (adults don't need stars), but
+  it does mean "nothing happened after updating" is the expected experience.
 
 ## What's been verified
 
@@ -266,6 +317,35 @@ instance, survived three weeks untouched — venv and `.storage` both intact):
   same user saw the panel, could read, and could write; flipping it back on
   restored both refusals. Title, icon and `module_url` all survived the
   remove-and-re-add.
+**2026-10-06**, the reward tracker, against `homeassistant` 2026.9.2 on the
+same WSL instance — 38 live checks plus a separate timing test, all passing:
+
+- Turning `rewards_enabled` on creates all four entities; turning it off
+  removes them from the registry rather than leaving them `unavailable`.
+- Automatic stars track the real list: 0 of 2 chores → no star, 1 of 2 →
+  still no star, 2 of 2 → star with `source: "auto"`, and the
+  `star_today` binary sensor follows each step.
+- A manual `false` beats completed chores; clearing the override (`null`)
+  restores the automatic `true`.
+- `tablet_time` is on exactly when *yesterday* has a star.
+- The goal: with the goal reached the `prize_earned` attribute and the
+  `weekly_prize` binary sensor both flip; `stars_needed` reports the
+  shortfall; `days_remaining` counts today. A full 6-of-7 week seeded
+  entirely in the past reads back correctly through the WS API.
+- Past weeks are browsable by `week_start`, and a week with no history comes
+  back all-`null` rather than erroring.
+- `set_star` refuses a future date, and refuses a member with tracking off —
+  both as clean `home_assistant_error`s.
+- The `skylight_family.set_star` service works targeting any of the member's
+  entities, via the entity registry's `config_subentry_id`.
+- **The daily job's ordering, proven against the real scheduler** (reset
+  time set ~75s out through the options flow): yesterday's star was frozen
+  as `{"star": true, "source": "auto"}`, the completed items were then
+  cleared, today's preset was re-applied, today started with no star, and
+  tablet time came on. Debug log confirms the sequence inside 26ms:
+  `freezing stars for <yesterday>` → `clearing completed items from …` →
+  `Cleared completed items from …` → `applying 2 item(s) to …`.
+
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
   (connection refused — the automation host isn't this machine), and
@@ -405,6 +485,33 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
 
 ## Process gotchas
 
+- **Don't use the host's date in a test — ask HA.** The WSL box's local date
+  and the test instance's configured timezone are hours apart, so
+  `date.today()` in a test script was a full calendar day behind
+  `dt_util.now().date()` inside HA, and every date-keyed assertion missed.
+  Read `today` out of the `skylight_family/rewards` payload instead. (The
+  HA *log* timestamps are host-local, which makes this even more confusing to
+  eyeball — a job logged at 20:45 host time fired at 00:45 HA time.)
+- **The HTTP API comes up long before custom components finish setting up.**
+  A test that starts the moment `/api/` stops 401-ing gets
+  `unknown_command` for our WS commands. Poll for one of them to succeed
+  rather than polling the core API.
+- **Don't poll for step one of a multi-step job and then assert on step
+  four.** Two "failures" in the daily-reset test were just the script
+  detecting the star freeze (first thing the job does) and immediately
+  checking the to-do list and the entity states, which the job hadn't got to
+  yet. Both vanished with a short sleep after the freeze is seen. Worth
+  suspecting before suspecting the code — and worth checking the debug log,
+  which showed the job completing cleanly all along.
+- **`DataUpdateCoordinator`'s default request-refresh debouncer waits 10
+  seconds before the *first* recompute** (`immediate=False`). For anything
+  user-facing that's indistinguishable from broken — ticking off the last
+  chore wouldn't light the star for ten seconds. Pass an explicit
+  `Debouncer(..., cooldown=2.0, immediate=True)`.
+- **Pass `config_entry=` to `DataUpdateCoordinator` explicitly.** Omitting it
+  makes it fall back to a ContextVar and emit a frame-usage report; it's only
+  ignored for custom integrations by grace. Then use `self.config_entry`
+  rather than keeping a second reference.
 - **There is no HA UI for toggling `require_admin` on a custom panel, and
   Settings → Dashboards is not it.** HA core *does* have a persistent,
   admin-only `frontend/update_panel` WS command that overrides a panel's

@@ -15,6 +15,7 @@ for the same things via the config subentry flows.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 import voluptuous as vol
 
@@ -30,7 +31,9 @@ from homeassistant.util import dt as dt_util
 
 from . import panel, websocket_api
 from .const import (
+    ATTR_DATE,
     ATTR_PRESET,
+    ATTR_STAR,
     BUILTIN_PRESETS,
     CONF_PANEL_ADMIN_ONLY,
     CONF_PRESET_ITEMS,
@@ -39,7 +42,9 @@ from .const import (
     DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
     DOMAIN,
+    REWARD_ENTITY_SUFFIXES,
     SERVICE_APPLY_PRESET,
+    SERVICE_SET_STAR,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
     WEEKDAY_PRESET_FIELDS,
@@ -53,15 +58,25 @@ from .helpers import (
     members,
     presets,
 )
+from .rewards import RewardsCoordinator, rewards_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 APPLY_PRESET_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
         vol.Required(ATTR_PRESET): cv.string,
+    }
+)
+
+SET_STAR_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        # Omit `star` entirely to hand the day back to automatic evaluation.
+        vol.Optional(ATTR_STAR): cv.boolean,
+        vol.Optional(ATTR_DATE): cv.date,
     }
 )
 
@@ -86,35 +101,79 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if preset_subentry is None:
             raise HomeAssistantError(f"No preset named '{call.data[ATTR_PRESET]}'")
 
-        ent_reg = er.async_get(hass)
-        for entity_id in call.data[ATTR_ENTITY_ID]:
-            registry_entry = ent_reg.async_get(entity_id)
-            member_subentry = (
-                entry.subentries.get(registry_entry.config_subentry_id)
-                if registry_entry and registry_entry.config_subentry_id
-                else None
-            )
-            if (
-                member_subentry is None
-                or member_subentry.subentry_type != SUBENTRY_TYPE_MEMBER
-            ):
-                raise HomeAssistantError(
-                    f"{entity_id} is not a Skylight Family member"
-                )
-
+        for member_subentry in _resolve_members(hass, entry, call):
             await async_apply_preset_to_member(
                 hass, member_subentry, preset_subentry
+            )
+
+    async def _handle_set_star(call: ServiceCall) -> None:
+        entry = get_entry(hass)
+        if entry is None:
+            raise HomeAssistantError("Skylight Family is not configured")
+
+        coordinator: RewardsCoordinator = entry.runtime_data
+        day = call.data.get(ATTR_DATE) or dt_util.now().date()
+        star = call.data.get(ATTR_STAR)
+
+        for member_subentry in _resolve_members(hass, entry, call):
+            if not rewards_enabled(member_subentry):
+                raise HomeAssistantError(
+                    f"Reward tracking is turned off for {member_subentry.title}"
+                )
+            await coordinator.async_set_star(
+                member_subentry.subentry_id, day, star
             )
 
     hass.services.async_register(
         DOMAIN, SERVICE_APPLY_PRESET, _handle_apply_preset, schema=APPLY_PRESET_SCHEMA
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_STAR, _handle_set_star, schema=SET_STAR_SCHEMA
+    )
     websocket_api.async_register(hass)
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+def _resolve_members(
+    hass: HomeAssistant, entry: ConfigEntry, call: ServiceCall
+) -> list[ConfigSubentry]:
+    """Map targeted entity_ids back to the member subentries that own them.
+
+    Goes through the entity registry's `config_subentry_id` rather than
+    parsing entity_ids, so it works for any of a member's entities (the
+    mapping sensor, a star sensor, the tablet-time binary sensor) and
+    doesn't break if a member is renamed.
+    """
+    ent_reg = er.async_get(hass)
+    resolved: list[ConfigSubentry] = []
+    for entity_id in call.data[ATTR_ENTITY_ID]:
+        registry_entry = ent_reg.async_get(entity_id)
+        member_subentry = (
+            entry.subentries.get(registry_entry.config_subentry_id)
+            if registry_entry and registry_entry.config_subentry_id
+            else None
+        )
+        if (
+            member_subentry is None
+            or member_subentry.subentry_type != SUBENTRY_TYPE_MEMBER
+        ):
+            raise HomeAssistantError(f"{entity_id} is not a Skylight Family member")
+        if member_subentry not in resolved:
+            resolved.append(member_subentry)
+    return resolved
+
+
+type SkylightFamilyEntry = ConfigEntry[RewardsCoordinator]
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: SkylightFamilyEntry) -> bool:
     _seed_builtin_presets(hass, entry)
+    _remove_stale_reward_entities(hass, entry)
+
+    coordinator = RewardsCoordinator(hass, entry)
+    await coordinator.async_prepare()
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
 
     await panel.async_register(
         hass,
@@ -163,6 +222,37 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _remove_stale_reward_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete a member's star entities once reward tracking is turned off.
+
+    Platforms simply stop creating them, which leaves the registry entries
+    behind as permanently `unavailable` entities cluttering the member's
+    device page.
+
+    Matches the known reward suffixes rather than "anything that isn't the
+    mapping sensor", so adding some other per-member entity later doesn't
+    silently get swept up by this.
+    """
+    ent_reg = er.async_get(hass)
+    for subentry in members(entry):
+        if rewards_enabled(subentry):
+            continue
+        stale_ids = {
+            f"{entry.entry_id}_{subentry.subentry_id}_{suffix}"
+            for suffix in REWARD_ENTITY_SUFFIXES
+        }
+        for registry_entry in er.async_entries_for_config_entry(
+            ent_reg, entry.entry_id
+        ):
+            if registry_entry.unique_id in stale_ids:
+                _LOGGER.debug(
+                    "Removing %s, reward tracking is off for %s",
+                    registry_entry.entity_id,
+                    subentry.title,
+                )
+                ent_reg.async_remove(registry_entry.entity_id)
+
+
 def _seed_builtin_presets(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Create the built-in presets as ordinary preset subentries, once.
 
@@ -185,8 +275,18 @@ def _seed_builtin_presets(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def _apply_daily_reset(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """For each member: clear yesterday's completed items, then apply
-    whichever preset (if any) is assigned to today's weekday."""
+    """Freeze yesterday's stars, then clear completed items and apply today's
+    presets.
+
+    Order matters: clearing completed items destroys the only evidence of
+    whether yesterday's chores were done, so the star has to be recorded
+    first. See `rewards.py`.
+    """
+    coordinator: RewardsCoordinator = entry.runtime_data
+    yesterday = dt_util.now().date() - timedelta(days=1)
+    _LOGGER.debug("Daily reset: freezing stars for %s", yesterday)
+    await coordinator.async_freeze_day(yesterday)
+
     presets_by_id = {
         subentry.subentry_id: subentry.data.get(CONF_PRESET_ITEMS, [])
         for subentry in presets(entry)
@@ -199,9 +299,17 @@ async def _apply_daily_reset(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if not todo_entity_id:
             continue
 
+        _LOGGER.debug("Daily reset: clearing completed items from %s", todo_entity_id)
         await async_clear_completed(hass, todo_entity_id)
 
         preset_id = subentry.data.get(today_field)
         items = presets_by_id.get(preset_id, []) if preset_id else []
+        _LOGGER.debug(
+            "Daily reset: applying %d item(s) to %s", len(items), todo_entity_id
+        )
         if items:
             await async_apply_items(hass, todo_entity_id, items)
+
+    # Today's star starts over from an empty list, and tablet time now
+    # reflects the star we just froze.
+    await coordinator.async_refresh()

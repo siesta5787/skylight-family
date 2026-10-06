@@ -45,7 +45,9 @@
             "preset_thu": "Thursday preset",
             "preset_fri": "Friday preset",
             "preset_sat": "Saturday preset",
-            "preset_sun": "Sunday preset"
+            "preset_sun": "Sunday preset",
+            "rewards_enabled": "Track stars and rewards for this member",
+            "star_goal": "Stars needed each week for the prize"
           }
         },
         "reconfigure": {
@@ -62,7 +64,9 @@
             "preset_thu": "Thursday preset",
             "preset_fri": "Friday preset",
             "preset_sat": "Saturday preset",
-            "preset_sun": "Sunday preset"
+            "preset_sun": "Sunday preset",
+            "rewards_enabled": "Track stars and rewards for this member",
+            "star_goal": "Stars needed each week for the prize"
           }
         }
       }
@@ -98,6 +102,20 @@
         "preset": {
           "name": "Preset",
           "description": "The exact name of an existing Skylight Family preset, e.g. \"Toddler\"."
+        }
+      }
+    },
+    "set_star": {
+      "name": "Set star",
+      "description": "Awards or revokes a day's star for one or more Skylight Family members, overriding whether their chores were actually finished.",
+      "fields": {
+        "star": {
+          "name": "Star",
+          "description": "On to award the star, off to revoke it. Leave it unset to remove the manual override and go back to deciding the day from whether the chores got done."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Which day to change. Defaults to today."
         }
       }
     }
