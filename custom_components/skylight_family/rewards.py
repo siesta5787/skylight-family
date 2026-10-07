@@ -51,22 +51,19 @@ from .const import (
     WEEKDAY_PRESET_FIELDS,
     WEEKDAYS,
 )
-from .helpers import members
+from .helpers import (
+    day_of_week_position,
+    members,
+    ordered_weekdays,
+    start_of_week,
+    week_dates,
+    week_start_index,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 # Safety net only — the real trigger is the to-do list changing.
 UPDATE_INTERVAL = timedelta(minutes=15)
-
-
-def week_start(day: date) -> date:
-    """The Monday of `day`'s week, matching WEEKDAYS being Monday-first."""
-    return day - timedelta(days=day.weekday())
-
-
-def week_days(day: date) -> list[date]:
-    start = week_start(day)
-    return [start + timedelta(days=offset) for offset in range(7)]
 
 
 def rewards_enabled(subentry: ConfigSubentry) -> bool:
@@ -198,9 +195,10 @@ class RewardsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # star — a blank day has to be granted by hand.
         auto_star = total > 0 and done == total
 
+        start_index = week_start_index(self.config_entry)
         days: dict[str, Any] = {}
         stars = 0
-        for day in week_days(today):
+        for day in week_dates(today, start_index):
             if day > today:
                 record = None
             elif day == today:
@@ -216,8 +214,8 @@ class RewardsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
         return {
             "name": subentry.title,
-            "weekday_keys": [key for key, _label in WEEKDAYS],
-            "week_start": week_start(today).isoformat(),
+            "weekday_keys": [key for key, _label in ordered_weekdays(start_index)],
+            "week_start": start_of_week(today, start_index).isoformat(),
             "today": today.isoformat(),
             "days": days,
             "stars": stars,
@@ -226,7 +224,7 @@ class RewardsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             "stars_needed": max(goal - stars, 0),
             # Chances left this week, today included — so the prize is still
             # reachable exactly when stars_needed <= days_remaining.
-            "days_remaining": 7 - today.weekday(),
+            "days_remaining": 7 - day_of_week_position(today, start_index),
             "star_today": bool(days[today.isoformat()]["star"]),
             "star_today_source": days[today.isoformat()]["source"],
             "chores_done": done,
@@ -314,6 +312,8 @@ class RewardsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         """
         today = dt_util.now().date()
         live = (self.data or {}).get(member_id, {})
+        # `start` is already a week-start date, so step through it directly
+        # rather than re-deriving it.
         days: dict[str, Any] = {}
         stars = 0
         for day in (start + timedelta(days=offset) for offset in range(7)):

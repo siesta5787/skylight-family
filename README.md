@@ -39,9 +39,10 @@ what*, Skylight HA owns the *display*.
   still happens in Settings. Admin-only by default, switchable from the
   integration's Configure page.
 - **Stars and rewards** — opt in per member (off by default). A kid earns one
-  star a day by finishing that day's preset chores; collect enough in a
-  Monday–Sunday week (6 by default) and the weekly prize is earned; earn
-  today's star and tablet time is allowed tomorrow.
+  star a day by finishing that day's preset chores; collect enough in a week
+  (6 by default) and the weekly prize is earned; earn today's star and tablet
+  time is allowed tomorrow. **Which day the week starts on is a setting** —
+  pick whatever your household uses.
   - Today's star updates live as items get ticked off, and is recorded for
     good at the daily reset — before completed items are cleared.
   - You can award or revoke any past day by hand, which overrides the chores;
@@ -58,7 +59,8 @@ what*, Skylight HA owns the *display*.
     shortfall underneath.
 - **Pocket money** — opt in per member, with a short-term and a long-term
   account. Deposit, log expenses, and the long-term account earns interest
-  at a yearly rate you set per kid, credited every Monday.
+  at a yearly rate you set per kid, credited weekly on whichever day your
+  week starts.
   - **Back-date anything.** Forgot to log an expense last week? Enter it at
     the date it happened and the interest earned since is recalculated —
     interest is always derived from the ledger rather than stored, so it
@@ -126,10 +128,14 @@ repository, then **Redownload**, then restart.
    It's a separate page from HA's built-in "To-do Lists"; if you'd rather
    see only one of them, hide the other by long-pressing the sidebar and
    editing it.
-4. The integration's **Configure** page has two settings: the daily reset
-   time, and whether the sidebar panel is **admin only** (on by default).
-   Turn it off to let any Home Assistant user open the panel and change
-   routines and presets from it.
+4. The integration's **Configure** page has three settings:
+   - the daily reset time,
+   - **which day the week starts on** (Monday by default) — used for the star
+     week and the weekly prize, and for the day long-term interest is
+     credited,
+   - and whether the sidebar panel is **admin only** (on by default). Turn it
+     off to let any Home Assistant user open the panel and change routines
+     and presets from it.
 
 ## Development
 

@@ -33,12 +33,14 @@ from .const import (
     CONF_PRESET_ITEMS,
     CONF_RESET_TIME,
     CONF_REWARDS_ENABLED,
+    CONF_WEEK_START,
     CONF_STAR_GOAL,
     CONF_TODO,
     DEFAULT_INTEREST_RATE,
     DEFAULT_PANEL_ADMIN_ONLY,
     DEFAULT_RESET_TIME,
     DEFAULT_STAR_GOAL,
+    DEFAULT_WEEK_START,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
@@ -93,6 +95,18 @@ class SkylightFamilyOptionsFlow(OptionsFlow):
                     CONF_RESET_TIME,
                     default=options.get(CONF_RESET_TIME, DEFAULT_RESET_TIME),
                 ): selector.TimeSelector(),
+                vol.Required(
+                    CONF_WEEK_START,
+                    default=options.get(CONF_WEEK_START, DEFAULT_WEEK_START),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": key, "label": label}
+                            for key, label in WEEKDAYS
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Required(
                     CONF_PANEL_ADMIN_ONLY,
                     default=options.get(

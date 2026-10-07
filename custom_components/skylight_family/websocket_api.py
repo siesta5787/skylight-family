@@ -56,17 +56,15 @@ from .helpers import (
     get_entry,
     members,
     presets,
+    ordered_weekdays,
     require_entry,
     require_subentry,
+    start_of_week,
+    week_start_index,
 )
 from .money import interest_rate, money_enabled
 from .money import tracked_members as money_members
-from .rewards import (
-    rewards_enabled,
-    star_goal,
-    tracked_members,
-    week_start,
-)
+from .rewards import rewards_enabled, star_goal, tracked_members
 
 WS_GET_CONFIG = f"{DOMAIN}/config"
 WS_PRESET_CREATE = f"{DOMAIN}/preset/create"
@@ -394,8 +392,9 @@ def ws_rewards(
     coordinator = entry.runtime_data.rewards
 
     today = dt_util.now().date()
+    start_index = week_start_index(entry)
     requested = msg.get("week_start") or today
-    start = week_start(requested)
+    start = start_of_week(requested, start_index)
 
     payload = []
     for subentry in tracked_members(entry):
@@ -423,8 +422,13 @@ def ws_rewards(
         msg["id"],
         {
             "today": today.isoformat(),
-            "this_week_start": week_start(today).isoformat(),
-            "weekdays": [{"key": key, "label": label} for key, label in WEEKDAYS],
+            "this_week_start": start_of_week(today, start_index).isoformat(),
+            # Ordered to match the dates in each member's `days` map, so the
+            # panel's columns line up without it knowing the setting.
+            "weekdays": [
+                {"key": key, "label": label}
+                for key, label in ordered_weekdays(start_index)
+            ],
             "members": payload,
         },
     )
@@ -457,7 +461,11 @@ async def ws_set_star(
     coordinator = entry.runtime_data.rewards
     await coordinator.async_set_star(subentry.subentry_id, msg["date"], msg["star"])
     connection.send_result(
-        msg["id"], coordinator.week_snapshot(subentry.subentry_id, week_start(msg["date"]))
+        msg["id"],
+        coordinator.week_snapshot(
+            subentry.subentry_id,
+            start_of_week(msg["date"], week_start_index(entry)),
+        ),
     )
 
 

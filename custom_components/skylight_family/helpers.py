@@ -8,6 +8,7 @@ importing the package's `__init__` back into itself.
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.auth.models import User
@@ -18,10 +19,13 @@ from .const import (
     CONF_PANEL_ADMIN_ONLY,
     CONF_PRESET_ITEMS,
     CONF_TODO,
+    CONF_WEEK_START,
     DEFAULT_PANEL_ADMIN_ONLY,
+    DEFAULT_WEEK_START,
     DOMAIN,
     SUBENTRY_TYPE_MEMBER,
     SUBENTRY_TYPE_PRESET,
+    WEEKDAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,6 +62,45 @@ def check_panel_write_access(hass: HomeAssistant, user: User | None) -> None:
     """
     if user is None or (panel_is_admin_only(hass) and not user.is_admin):
         raise Unauthorized
+
+
+def week_start_index(entry: ConfigEntry | None) -> int:
+    """The configured first day of the week, as a Monday-based 0-6 index.
+
+    Monday-based because that's what `date.weekday()` returns, which is what
+    every calculation here compares against.
+    """
+    key = (
+        entry.options.get(CONF_WEEK_START, DEFAULT_WEEK_START)
+        if entry
+        else DEFAULT_WEEK_START
+    )
+    keys = [day_key for day_key, _label in WEEKDAYS]
+    return keys.index(key) if key in keys else 0
+
+
+def start_of_week(day: date, start_index: int) -> date:
+    """The first day of `day`'s week, given which weekday a week starts on."""
+    return day - timedelta(days=(day.weekday() - start_index) % 7)
+
+
+def week_dates(day: date, start_index: int) -> list[date]:
+    start = start_of_week(day, start_index)
+    return [start + timedelta(days=offset) for offset in range(7)]
+
+
+def day_of_week_position(day: date, start_index: int) -> int:
+    """How far into its week `day` falls — 0 on the first day, 6 on the last."""
+    return (day.weekday() - start_index) % 7
+
+
+def ordered_weekdays(start_index: int) -> list[tuple[str, str]]:
+    """WEEKDAYS rotated so the configured first day comes first.
+
+    For display and for lining a week's columns up with its dates. Never use
+    this to look a preset field up from a date — that's WEEKDAYS' job.
+    """
+    return WEEKDAYS[start_index:] + WEEKDAYS[:start_index]
 
 
 def subentries_of(entry: ConfigEntry, subentry_type: str) -> list[ConfigSubentry]:

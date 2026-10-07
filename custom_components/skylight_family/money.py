@@ -48,7 +48,7 @@ from .const import (
     MONEY_STORAGE_VERSION,
     WEEKS_PER_YEAR,
 )
-from .helpers import members
+from .helpers import members, start_of_week, week_start_index
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,10 +69,6 @@ def interest_rate(subentry: ConfigSubentry) -> Decimal:
 
 def tracked_members(entry: ConfigEntry) -> list[ConfigSubentry]:
     return [subentry for subentry in members(entry) if money_enabled(subentry)]
-
-
-def monday_of(day: date) -> date:
-    return day - timedelta(days=day.weekday())
 
 
 def _round_cents(value: Decimal) -> int:
@@ -242,6 +238,7 @@ def replay(
     account: str,
     rate: Decimal,
     as_of: date,
+    start_index: int = 0,
 ) -> dict[str, Any]:
     """Replay one account's ledger, deriving interest as it goes.
 
@@ -250,8 +247,10 @@ def replay(
     list with a running balance on each — including the derived interest
     rows, which carry no `id` so the UI knows they can't be deleted.
 
-    Interest for a week is credited on the *following* Monday, calculated on
-    the balance as it stood at the end of that week.
+    Interest for a week is credited on the first day of the *following*
+    week, calculated on the balance as it stood at the end of that week.
+    `start_index` is the configured first day of the week (Monday-based), so
+    a household whose week starts on Sunday gets its interest on Sundays.
     """
     relevant = [
         entry
@@ -278,10 +277,11 @@ def replay(
 
     by_week: dict[date, list[dict[str, Any]]] = {}
     for entry in relevant:
-        by_week.setdefault(monday_of(date.fromisoformat(entry["date"])), []).append(entry)
+        week_of = start_of_week(date.fromisoformat(entry["date"]), start_index)
+        by_week.setdefault(week_of, []).append(entry)
 
-    week = monday_of(date.fromisoformat(relevant[0]["date"]))
-    current_week = monday_of(as_of)
+    week = start_of_week(date.fromisoformat(relevant[0]["date"]), start_index)
+    current_week = start_of_week(as_of, start_index)
 
     while week <= current_week:
         for entry in by_week.get(week, []):
@@ -334,12 +334,15 @@ def replay(
 
 @callback
 def member_summary(
-    entries: list[dict[str, Any]], rate: Decimal, as_of: date
+    entries: list[dict[str, Any]],
+    rate: Decimal,
+    as_of: date,
+    start_index: int = 0,
 ) -> dict[str, Any]:
     """Both accounts' closing figures, without the row lists."""
     summary: dict[str, Any] = {}
     for account in ACCOUNTS:
-        result = replay(entries, account, rate, as_of)
+        result = replay(entries, account, rate, as_of, start_index)
         result.pop("rows")
         summary[account] = result
     return summary
@@ -367,11 +370,13 @@ class MoneyCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         as_of = dt_util.now().date()
+        start_index = week_start_index(self.config_entry)
         return {
             subentry.subentry_id: member_summary(
                 self.store.entries(subentry.subentry_id),
                 interest_rate(subentry),
                 as_of,
+                start_index,
             )
             for subentry in tracked_members(self.config_entry)
         }
@@ -381,13 +386,14 @@ class MoneyCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         """Rows for one member, newest first, with the running balance."""
         as_of = dt_util.now().date()
         rate = interest_rate(subentry)
+        start_index = week_start_index(self.config_entry)
         entries = self.store.entries(subentry.subentry_id)
 
         wanted = ACCOUNTS if account is None else (account,)
         rows: list[dict[str, Any]] = []
         totals: dict[str, Any] = {}
         for name in wanted:
-            result = replay(entries, name, rate, as_of)
+            result = replay(entries, name, rate, as_of, start_index)
             rows.extend(result.pop("rows"))
             totals[name] = result
 

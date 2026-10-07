@@ -82,6 +82,24 @@ it.
   progress / tablet time / prize status). Registered via
   `panel_custom.async_register_panel` with
   `component_name="custom"` and `embed_iframe=False`.
+- **`week_start` option** (default `mon`) — which day a week starts on. It
+  drives both the star week (so "6 of 7" and the prize line up with the
+  household's week) and the day long-term interest is credited, deliberately
+  one idea of "a week" rather than two. Because both are *derived* from
+  dates rather than stored per week, changing it regroups existing star
+  history and recomputes interest — which is the right behaviour but worth
+  saying out loud.
+  - **`const.WEEKDAYS` stays canonical Monday-first and must not be
+    reordered**: it maps `date.weekday()` to the stored `preset_mon`…
+    `preset_sun` field names, so rotating it would silently repoint
+    everyone's presets. `helpers.ordered_weekdays(start_index)` is the
+    rotated view, for display and for lining a week's columns up with its
+    dates. The date maths lives in `helpers.start_of_week`,
+    `week_dates` and `day_of_week_position`, shared by rewards and money so
+    the two can't disagree about where a week begins.
+  - The panel needs no knowledge of the setting: the WS payload returns
+    `weekdays` already in the configured order, matching the date keys in
+    each member's `days` map.
 - **`panel_admin_only` option** (default on) — the integration owns this
   because HA core ships no UI that can set `require_admin` on a *custom*
   panel (see Process gotchas). It gates **both** who sees the sidebar entry
@@ -478,6 +496,31 @@ unit suite grown to 42, and the panel suites extended:
   transfer with its destination selected; and a transfer renders as two
   rows reading "Transfer to long term" / "Transfer from short term".
 
+**2026-10-06 (configurable week start)** — 29 unit checks plus 16 live ones:
+
+- `start_of_week` groups every day of a Sunday week onto the same Sunday,
+  and the same Sunday belongs to the *previous* Monday week; `week_dates`
+  runs Sun→Sat or Mon→Sun accordingly; `ordered_weekdays` rotates with the
+  labels travelling with the keys, and its order matches `week_dates`'
+  weekdays exactly.
+- Interest credit dates follow the setting: all Sundays with a Sunday week,
+  all Mondays with a Monday one. The clean discriminator: a deposit made on
+  Sunday 4 Oct, read on Monday 5 Oct, has earned nothing under a Sunday week
+  (still in progress) but one week's interest under a Monday week (the week
+  closed overnight). Part-week accrual resets on the configured first day.
+- Live, driving the real options flow: weekday order and `this_week_start`
+  flip with the setting, the member's week runs Sun→Sat, a star set on the
+  Sunday counts toward the Sunday week and drops out of the current week
+  when it's switched back to Monday, and ledger interest rows move from
+  Sundays to Mondays and back.
+- The live-payload render harness now asserts **column alignment** — that
+  the rendered `.dow` headers match the backend's `weekdays` order *and*
+  that each header sits above a date which really is that weekday. Captured
+  and run with the instance set to Sunday, which is the case that would
+  otherwise silently put stars under the wrong days.
+- The whole live set passes twice through back-to-back with the instance on
+  a Sunday week.
+
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
   (connection refused — the automation host isn't this machine), and
@@ -664,13 +707,20 @@ machine's `Ubuntu` WSL2 distro, Python 3.14.4 via apt, was what all the
   Settings → Dashboards (this was gotten wrong once, from seeing the WS
   command plus a `require_admin` table column and inferring a UI that
   doesn't apply to us). Hence the `panel_admin_only` option.
-- **The live suites share one member and one to-do list, so run them with a
-  pause between.** Running the money suite immediately before the reward one
-  made four chore-progress checks fail; both pass alone, and both pass
-  back-to-back with ~10s between. Each suite ends by toggling a feature off,
-  which reloads the config entry, and the next suite can start mid-reload.
-  Suspect ordering before suspecting the code when a suite only fails in a
-  batch.
+- **The live suites share one member and one to-do list, so each has to
+  clean up after itself.** The reward suite intermittently failed four
+  chore-progress checks, and the cause was its own previous run leaving
+  "Star test: …" items on the list as **completed** — and a completed (or
+  deleted) expected item counts as *done*, so the star was already earned
+  before the test started. My first guess, a config-entry-reload race from
+  running suites back-to-back, was wrong: it now passes twice through with
+  no pauses. The suite removes its items at setup, and `todo.remove_item`
+  errors on an item that isn't there, so read the list first and only remove
+  what's present.
+- **Test assertions must not assume the week starts on Monday either.** Four
+  reward-suite checks hardcoded `today.weekday()` for week maths and broke
+  the moment the week-start option was set to Sunday. Derive the week from
+  the backend's own `this_week_start` instead.
 - **Verify in-place patches to the test scripts actually applied.** Several
   multi-line `str.replace()` edits to files under `%TEMP%` silently did
   nothing — `replace` returns the string unchanged rather than raising, so

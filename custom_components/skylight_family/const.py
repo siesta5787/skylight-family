@@ -8,10 +8,15 @@ CONF_CALENDARS = "calendar_entity_ids"
 CONF_TODO = "todo_entity_id"
 CONF_COLOR = "color"
 
-# Per-weekday preset assignment: (key, display label), Monday first to match
-# Python's own date.weekday() numbering (Monday == 0). A member's subentry
-# stores one optional preset_subentry_id per day under WEEKDAY_PRESET_FIELDS[key]
-# — no assignment for a given day means no preset is applied that day.
+# Per-weekday preset assignment: (key, display label). This list is
+# **canonical and always Monday-first**, matching Python's own
+# date.weekday() numbering (Monday == 0) — it maps a date to a stored field
+# name, so reordering it would silently repoint everyone's presets.
+# Which day a *week* starts on is a separate, configurable thing
+# (CONF_WEEK_START); use helpers.ordered_weekdays() wherever display or
+# week-grouping order matters.
+# A member's subentry stores one optional preset_subentry_id per day under
+# WEEKDAY_PRESET_FIELDS[key] — no assignment for a day means no preset then.
 WEEKDAYS: list[tuple[str, str]] = [
     ("mon", "Monday"),
     ("tue", "Tuesday"),
@@ -96,6 +101,15 @@ DEFAULT_RESET_TIME = "04:00:00"
 # it, since the panel is an editor with no read-only mode.
 CONF_PANEL_ADMIN_ONLY = "panel_admin_only"
 DEFAULT_PANEL_ADMIN_ONLY = True
+# Which day a week starts on, as one of WEEKDAYS' keys. Governs both the star
+# week (so "6 of 7" and the prize line up with the household's week) and the
+# day long-term interest is credited on, so there's one idea of "a week"
+# rather than two. Defaults to Monday, which is what this integration did
+# before the setting existed — changing it regroups existing star history and
+# recomputes interest, since both are derived from dates rather than stored
+# per week.
+CONF_WEEK_START = "week_start"
+DEFAULT_WEEK_START = "mon"
 
 # Service: skylight_family.apply_preset
 SERVICE_APPLY_PRESET = "apply_preset"

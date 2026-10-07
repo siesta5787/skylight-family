@@ -16,10 +16,12 @@
         "title": "Skylight Family settings",
         "data": {
           "reset_time": "Daily reset time (clears completed items and applies today's presets)",
-          "panel_admin_only": "Sidebar panel is admin only"
+          "panel_admin_only": "Sidebar panel is admin only",
+          "week_start": "Week starts on"
         },
         "data_description": {
-          "panel_admin_only": "When off, any Home Assistant user can see the Skylight panel in the sidebar and change routines and presets from it."
+          "panel_admin_only": "When off, any Home Assistant user can see the Skylight panel in the sidebar and change routines and presets from it.",
+          "week_start": "Used for the star week and the weekly prize, and for the day long-term interest is credited. Changing it regroups existing star history and recalculates interest."
         }
       }
     }
