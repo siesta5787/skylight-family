@@ -91,6 +91,14 @@ what*, Skylight HA owns the *display*.
   events/tasks are still read straight from the real `calendar.*`/`todo.*`
   entities — this integration doesn't duplicate them.
 
+## Branding
+
+The icon and logo shown in Home Assistant ship inside the integration
+(`custom_components/skylight_family/brand/`), so nothing needs submitting to
+the Home Assistant brands repository. The PNGs are generated from the SVGs in
+`brand/` by `scripts/build_brand.py` — edit the SVG and re-run it rather than
+touching the PNGs.
+
 ## Why the name
 
 `skylight` and `ha-skylight` are already taken by unrelated community

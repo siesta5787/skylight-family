@@ -222,6 +222,22 @@ it.
   humans and automations think that way — converted to cents on the way in;
   handy for automating a weekly allowance) plus `skylight_family/money`,
   `money/ledger`, `money/add` and `money/delete` WS commands.
+- **Branding** lives in two places. `brand/*.svg` are the hand-authored
+  sources (icon, logo); `custom_components/skylight_family/brand/*.png` are
+  generated from them by `scripts/build_brand.py` (needs `rsvg-convert`,
+  i.e. `librsvg2-bin`) and are what HA actually shows. **Do not hand-edit the
+  PNGs — edit the SVG and re-run the script.** Shipped: `icon`/`logo`, each
+  with an `@2x`, plus `dark_logo` (+`@2x`) because the wordmark is dark navy
+  and vanishes on a dark theme. `dark_icon` is deliberately not shipped; the
+  blue icon works on both and HA falls back to `icon.png`.
+  - **No submission to `home-assistant/brands` is needed or wanted.** HA
+    (verified in 2026.9.2's `components/brands`) serves a custom
+    integration's images from its own `brand/` folder
+    (`Integration.has_branding`), only going to the CDN when that folder is
+    absent. Earlier notes in this project said a brands-repo PNG submission
+    was required; that is out of date.
+  - HA caches the custom-integration list, so adding or changing `brand/`
+    needs an HA restart to take effect.
 - No Lovelace cards and no custom theme — the sidebar panel is the only
   thing this integration renders in HA's frontend, and it's a standalone
   page, not a dashboard card. HA's built-in "To-do Lists" sidebar entry is
@@ -522,6 +538,15 @@ unit suite grown to 42, and the panel suites extended:
   otherwise silently put stars under the wrong days.
 - The whole live set passes twice through back-to-back with the instance on
   a Sunday week.
+
+**2026-10-17 (branding)** — rendered the PNGs and checked them by eye
+(icon, light logo, and the dark logo composited on a dark background), then
+requested every one through HA's `/api/brands/integration/skylight_family/…`
+endpoint on the live test instance: all six return 200 `image/png` with bytes
+identical to the files on disk, the unshipped `dark_icon.png` falls back to
+our own `icon.png`, and an unknown domain 404s with `placeholder=no`, which
+is what shows the images aren't coming from the CDN. **Not yet confirmed on
+the user's real HAOS** — that needs HACS to bring down 0.7.1 plus a restart.
 
 - **Not covered**: loading the panel inside a real HA frontend. The browser
   automation available in this session couldn't reach the WSL instance
