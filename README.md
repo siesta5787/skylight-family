@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="brand/logo.svg" alt="Skylight Family" width="380">
+</p>
+
 # Skylight Family
 
 A Home Assistant custom integration that coordinates family members with

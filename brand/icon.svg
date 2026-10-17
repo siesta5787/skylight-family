@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6EC6FF"/>
+      <stop offset="100%" stop-color="#5B8DEF"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#FFF6D8"/>
+      <stop offset="100%" stop-color="#FFE9A8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#bg)"/>
+
+  <!-- soft sun glow behind the skylight -->
+  <circle cx="128" cy="92" r="92" fill="url(#sun)"/>
+
+  <!-- skylight window, roof-style with mullions -->
+  <g stroke="#FFFFFF" stroke-width="8" stroke-linejoin="round" fill="#FFFFFF" fill-opacity="0.14">
+    <path d="M70 118 L128 76 L186 118 L186 168 L70 168 Z"/>
+    <line x1="128" y1="76" x2="128" y2="168"/>
+    <line x1="70" y1="143" x2="186" y2="143"/>
+  </g>
+
+  <!-- family members, as color-coded dots (echoes the per-member color field) -->
+  <circle cx="98" cy="202" r="11" fill="#FFD166"/>
+  <circle cx="128" cy="202" r="11" fill="#EF8354"/>
+  <circle cx="158" cy="202" r="11" fill="#9BE3A5"/>
+</svg>
