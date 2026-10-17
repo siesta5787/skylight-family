@@ -73,11 +73,11 @@ it.
   `calendar.*`/`todo.*` entities, not duplicated here.
 - **"Skylight" sidebar panel** (`panel.py` + `frontend/skylight-panel.js`),
   the day-to-day UI so none of this needs digging through Settings →
-  Devices & Services. Two tabs: *People* (each member's 7 weekday preset
+  Devices & Services. Three tabs: *People* (each member's 7 weekday preset
   dropdowns + Save, a "push a preset right now" row, and a collapsible
   Linked entities form for name/person/to-do/calendars/colour),
   *Presets* (view/add/edit/delete presets, plus apply-to-a-member from that
-  side too) and *Rewards* (a card per tracked member: seven tappable star
+  side too) and *Rewards / Money* (a card per tracked member: seven tappable star
   cells with their `auto`/`manual` source, a week pager, and today's chore
   progress / tablet time / prize status). Registered via
   `panel_custom.async_register_panel` with
@@ -140,7 +140,8 @@ it.
 - **Star / reward tracking** (`rewards.py`), off per member by default
   (`rewards_enabled`, with a `star_goal` defaulting to 6). The household
   rule: one star a day for finishing that day's chores, `star_goal` stars in
-  a Monday–Sunday week earns a prize, and today's star earns tablet time
+  a week (first day set by the `week_start` option) earns a prize, and
+  today's star earns tablet time
   *tomorrow*. Four points matter:
   - **Stars are history, not config**, so they live in their own
     `homeassistant.helpers.storage.Store` (`.storage/skylight_family.rewards`,
@@ -179,9 +180,10 @@ it.
   optional `week_start` so the panel can browse and edit history).
 - **Pocket-money ledger** (`money.py`), also off per member by default
   (`money_enabled`, with a per-member `interest_rate`). Two accounts, short
-  and long term; the long one earns an annual rate credited **weekly, every
-  Monday** at `rate/52`, matching the Monday-first week the stars already
-  use. The design turns on two constraints the user asked for:
+  and long term; the long one earns an annual rate credited **weekly, on the
+  first day of the configured week** (Monday by default, Sunday for this
+  user's household) at `rate/52`, using the same week as the stars. The
+  design turns on two constraints the user asked for:
   - **Back-dating has to back the interest out.** So interest is *never
     stored* — `money.replay()` recomputes every balance and every interest
     line from the entries a human actually typed, each time it's read.
@@ -198,7 +200,7 @@ it.
     get charged interest for being overdrawn.
   - The "accruing" figure is this part-week's interest (`balance × weekly
     rate × days_elapsed/7`), shown but not credited, so the number moves
-    between Mondays instead of sitting still for a week.
+    between interest days instead of sitting still for a week.
   - Unlike the star store, the money store is **never pruned** — a ledger
     that forgets old entries would make today's balance wrong.
   - **A transfer is one entry, not a paired expense and deposit.** It stores
@@ -268,7 +270,7 @@ it.
   disabled. Chore progress and tablet time are hidden when browsing a past
   week, since they describe right now and would be misleading there.
 - The Rewards tab tracks the current week by holding `_rewardsWeek = null`
-  rather than pinning today's Monday, so the panel left open overnight rolls
+  rather than pinning the current week's first day, so the panel left open overnight rolls
   over with the clock instead of getting stuck on yesterday's week.
 - **Money gaps**: no interest on the short-term account (the user confirmed
   they don't want it), and the ledger shows every entry ever with no paging —

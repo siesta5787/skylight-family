@@ -24,7 +24,7 @@ what*, Skylight HA owns the *display*.
   right now, independent of the daily schedule: a button in the sidebar
   panel, or the `skylight_family.apply_preset` service from an automation.
 - **A "Skylight" sidebar panel** — the day-to-day UI, so none of this needs
-  digging through Settings. Two tabs:
+  digging through Settings. Three tabs:
   - **People** — each member's seven weekday preset dropdowns, a "push a
     preset right now" button, and a collapsible form for which person,
     to-do list, calendars and colour belong to them.
@@ -32,7 +32,8 @@ what*, Skylight HA owns the *display*.
     member from that side too.
   - **Rewards / Money** — each tracked kid's week of stars, tappable to
     award or take one back with a pager for earlier weeks, and underneath,
-    their balances with deposit/expense buttons and a ledger.
+    their balances with deposit, expense and transfer buttons and a ledger
+    you can edit.
 
   It's a view of the same data as Settings → Devices & Services, not a
   parallel store, so you can use either. Adding and removing *members*
@@ -53,7 +54,7 @@ what*, Skylight HA owns the *display*.
     `…_star_today`, `…_tablet_time` (today's allowance — the hook for
     whatever enforces screen time) and `…_weekly_prize`. Plus a
     `skylight_family.set_star` service.
-  - Managed from the sidebar panel's **Rewards** tab: a card per kid with
+  - Managed from the sidebar panel's **Rewards / Money** tab: a card per kid with
     seven tappable star cells, a week pager for browsing and fixing up past
     weeks, and today's chore progress, tablet-time status and prize
     shortfall underneath.
@@ -162,9 +163,12 @@ over HA's REST API) and gotchas found while testing this.
 
 Verified end to end against a live `homeassistant` core via WSL — config
 flow, subentry flows, options flow, reconfigure and the scheduled reset job
-(2026-09-13), and the sidebar panel's WebSocket API plus the panel JS itself
-under jsdom (2026-10-05). See `CLAUDE.md` for exactly what was tested, what
-wasn't, and the API details used to drive it headlessly.
+(2026-09-13), the sidebar panel's WebSocket API plus the panel JS itself
+under jsdom (2026-10-05), and the star tracker, pocket-money ledger and
+configurable week start (2026-10-06). The panel has been used on a real
+Home Assistant instance, but not every path has been exercised there. See
+`CLAUDE.md` for exactly what was tested, what wasn't, and the API details
+used to drive it headlessly.
 
 ## License
 
